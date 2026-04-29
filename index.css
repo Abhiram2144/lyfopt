@@ -1,0 +1,160 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+@config "./tailwind.config.ts";
+
+@import "tailwindcss";
+
+/* LyfOpt Design System — Strict palette: #000 / #222 / #1DCD9F / #169976 */
+
+@layer base {
+  :root {
+    /* Base — pure black */
+    --background: 0 0% 0%;
+    --foreground: 0 0% 96%;
+
+    /* Surfaces — #222 */
+    --card: 0 0% 13%;
+    --card-foreground: 0 0% 96%;
+
+    --popover: 0 0% 13%;
+    --popover-foreground: 0 0% 96%;
+
+    /* Accent — #1DCD9F mint/teal */
+    --primary: 162 75% 46%;
+    --primary-foreground: 0 0% 4%;
+    --primary-hover: 162 75% 35%; /* #169976 */
+    --primary-glow: 162 75% 55%;
+
+    /* Surfaces / hierarchy */
+    --secondary: 0 0% 13%;
+    --secondary-foreground: 0 0% 90%;
+
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 62%;
+
+    --accent: 162 75% 46%;
+    --accent-foreground: 0 0% 4%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 98%;
+
+    /* Subtle borders */
+    --border: 0 0% 16%;
+    --input: 0 0% 13%;
+    --ring: 162 75% 46%;
+
+    --radius: 0.75rem;
+
+    /* Single-color glows (no multi-color gradients) */
+    --gradient-hero: radial-gradient(ellipse 80% 50% at 50% 0%, hsl(162 75% 46% / 0.18), transparent 70%);
+    --gradient-accent: linear-gradient(135deg, hsl(162 75% 46%), hsl(162 75% 35%));
+    --gradient-card: linear-gradient(180deg, hsl(0 0% 13%), hsl(0 0% 10%));
+    --shadow-glow: 0 0 50px -10px hsl(162 75% 46% / 0.45);
+    --shadow-elegant: 0 20px 60px -20px hsl(0 0% 0% / 0.7);
+    --shadow-card: 0 1px 0 0 hsl(0 0% 100% / 0.04) inset, 0 10px 40px -20px hsl(0 0% 0% / 0.6);
+
+    --sidebar-background: 0 0% 0%;
+    --sidebar-foreground: 0 0% 90%;
+    --sidebar-primary: 162 75% 46%;
+    --sidebar-primary-foreground: 0 0% 4%;
+    --sidebar-accent: 0 0% 13%;
+    --sidebar-accent-foreground: 0 0% 90%;
+    --sidebar-border: 0 0% 16%;
+    --sidebar-ring: 162 75% 46%;
+  }
+
+  .dark {
+    --background: 0 0% 0%;
+    --foreground: 0 0% 96%;
+    --card: 0 0% 13%;
+    --card-foreground: 0 0% 96%;
+    --popover: 0 0% 13%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 162 75% 46%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 13%;
+    --secondary-foreground: 0 0% 90%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 62%;
+    --accent: 162 75% 46%;
+    --accent-foreground: 0 0% 4%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 16%;
+    --input: 0 0% 13%;
+    --ring: 162 75% 46%;
+  }
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: hsl(var(--border));
+  }
+
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    letter-spacing: -0.02em;
+  }
+
+  /* Global button affordance */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a[href] {
+    cursor: pointer;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    background: linear-gradient(180deg, hsl(0 0% 100%), hsl(0 0% 70%));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .text-gradient-accent {
+    color: hsl(var(--primary));
+  }
+
+  .bg-hero-glow {
+    background: var(--gradient-hero);
+  }
+
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, hsl(0 0% 100% / 0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(0 0% 100% / 0.03) 1px, transparent 1px);
+    background-size: 56px 56px;
+  }
+
+  .glass {
+    background: hsl(0 0% 13% / 0.6);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid hsl(0 0% 100% / 0.06);
+  }
+
+  .shadow-glow {
+    box-shadow: var(--shadow-glow);
+  }
+
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+
+  .shadow-elegant {
+    box-shadow: var(--shadow-elegant);
+  }
+}
