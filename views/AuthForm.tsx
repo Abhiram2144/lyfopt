@@ -71,6 +71,15 @@ const AuthForm = ({ mode }: Props) => {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const authCallbackUrl = () => {
+    const next = encodeURIComponent("/onboarding");
+    if (typeof window === "undefined") {
+      return `/auth/callback?next=${next}`;
+    }
+
+    return `${window.location.origin}/auth/callback?next=${next}`;
+  };
+
   const nextPath = async (userId?: string) => {
     if (userId) {
       try {
@@ -102,7 +111,7 @@ const AuthForm = ({ mode }: Props) => {
         email,
         password,
         name,
-        redirectTo: `${window.location.origin}/onboarding`,
+        redirectTo: authCallbackUrl(),
       });
 
       setLoading(false);
@@ -112,7 +121,6 @@ const AuthForm = ({ mode }: Props) => {
       }
 
       setMessage("Check your email to confirm your account, then continue to onboarding.");
-      router.push("/onboarding");
       return;
     }
 
@@ -132,7 +140,7 @@ const AuthForm = ({ mode }: Props) => {
     setMessage("");
     setLoading(true);
 
-    const { error } = await signInWithGoogle(`${window.location.origin}/onboarding`);
+    const { error } = await signInWithGoogle(authCallbackUrl());
 
     setLoading(false);
     if (error) {

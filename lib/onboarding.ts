@@ -25,14 +25,15 @@ export interface OnboardingProfile {
 
 const KEY = "lyfopt:profile";
 
-type ProfileRow = {
-  id: string;
-  created_at?: string | null;
+type OnboardingRow = {
+  profile_id: string;
   baseline_type: BaselineType | null;
   failure_patterns: FailurePattern[] | null;
   feedback_style: FeedbackStyle | null;
   initial_mood: 1 | 2 | 3 | 4 | 5 | null;
-  plan_type?: string | null;
+  onboarding_completed_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export const emptyProfile = (): OnboardingProfile => ({
@@ -55,19 +56,11 @@ export const loadProfile = (): OnboardingProfile | null => {
   }
 };
 
-const fromRow = (row: ProfileRow): OnboardingProfile => ({
-  baseline_type: row.baseline_type,
-  failure_patterns: row.failure_patterns ?? [],
-  feedback_style: row.feedback_style,
-  mood_level: row.initial_mood,
-  completed_at: row.created_at ?? new Date().toISOString(),
-});
-
 export const loadProfileFromDatabase = async (userId: string): Promise<OnboardingProfile | null> => {
   const { data, error } = await supabase
-    .from("profiles")
-    .select("id, created_at, baseline_type, failure_patterns, feedback_style, initial_mood, plan_type")
-    .eq("id", userId)
+    .from("profile_onboarding")
+    .select("profile_id, baseline_type, failure_patterns, feedback_style, initial_mood, onboarding_completed_at, created_at, updated_at")
+    .eq("profile_id", userId)
     .maybeSingle();
 
   if (error) {
@@ -78,22 +71,29 @@ export const loadProfileFromDatabase = async (userId: string): Promise<Onboardin
     return null;
   }
 
-  const profile = fromRow(data as ProfileRow);
+  const row = data as OnboardingRow;
+  const profile: OnboardingProfile = {
+    baseline_type: row.baseline_type,
+    failure_patterns: row.failure_patterns ?? [],
+    feedback_style: row.feedback_style,
+    mood_level: row.initial_mood,
+    completed_at: row.onboarding_completed_at ?? row.created_at ?? new Date().toISOString(),
+  };
   saveProfile(profile);
   return profile;
 };
 
 export const saveProfileToDatabase = async (userId: string, profile: OnboardingProfile) => {
-  const row = {
-    id: userId,
+  const onboardingRow = {
+    profile_id: userId,
     baseline_type: profile.baseline_type,
     failure_patterns: profile.failure_patterns,
     feedback_style: profile.feedback_style,
     initial_mood: profile.mood_level,
-    plan_type: "free",
+    onboarding_completed_at: new Date().toISOString(),
   };
 
-  const { error } = await supabase.from("profiles").upsert(row, { onConflict: "id" });
+  const { error } = await supabase.from("profile_onboarding").upsert(onboardingRow, { onConflict: "profile_id" });
 
   if (error) {
     throw error;
