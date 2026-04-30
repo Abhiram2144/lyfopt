@@ -1,438 +1,466 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import {
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+} from "recharts";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Flame,
+  Sparkles,
+  ArrowRight,
+  TrendingUp,
+  Target,
+  Zap,
+  Clock,
+  Plus,
+} from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
+import { AppLayout } from "@/components/dashboard/AppLayout";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/components/site/AuthProvider";
-import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
-import { Textarea } from "@/components/ui/textarea";
-import { Sparkles, Brain, AlertTriangle, CheckCircle2, LogOut, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { loadProfile, loadProfileFromDatabase, type OnboardingProfile } from "@/lib/onboarding";
+import { generateHistory } from "@/lib/mockData";
+import { loadProfile } from "@/lib/onboarding";
+import {
+  computeMetrics,
+  fmtMins,
+  getLogByDate,
+  getSessionsForLog,
+  todayDate,
+  type ActivitySession,
+  type SessionCategory,
+} from "@/lib/sessions";
 
-interface DayInput {
-  sleepHours: number;
-  focusHours: number;
-  distractionHours: number;
-  energy: number; // 1-5
-  notes: string;
-}
+const fadeUp = {
+  initial: { opacity: 0, y: 14 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] as const },
+};
 
-interface AIReport {
-  summary: string;
-  problems: string[];
-  suggestions: string[];
-}
-
-const generateMockReport = (input: DayInput, profile: OnboardingProfile | null): AIReport => {
-  const problems: string[] = [];
-  const suggestions: string[] = [];
-
-  if (input.sleepHours < 7) {
-    problems.push(`Only ${input.sleepHours.toFixed(1)}h of sleep — below your recovery threshold.`);
-    suggestions.push("Move bedtime 45 minutes earlier tonight. Sleep is your highest-leverage fix.");
-  }
-  if (input.distractionHours >= 2) {
-    problems.push(`${input.distractionHours.toFixed(1)}h lost to distraction — that's your biggest leak today.`);
-    suggestions.push("Tomorrow: phone in another room from 9am to lunch. Block the source, not the symptom.");
-  }
-  if (input.focusHours < 2) {
-    problems.push("Less than 2h of real focus work — output will follow.");
-    suggestions.push("Schedule one 90-minute deep-work block before noon. Protect it like a meeting.");
-  }
-  if (input.energy <= 2) {
-    problems.push("Energy is critically low. Pushing through will make tomorrow worse.");
-    suggestions.push("End work by 7pm. Walk 20 minutes. No screens after 10pm.");
-  }
-
-  if (problems.length === 0) {
-    problems.push("No critical issues. Your day held together.");
-  }
-  if (suggestions.length === 0) {
-    suggestions.push("Stay the course. Repeat tomorrow and watch the trend.");
-  }
-
-  const tone = profile?.feedback_style ?? "balanced";
-  const summary =
-    tone === "strict"
-      ? `Mixed day. ${input.distractionHours >= 2 ? "Distraction was the killer." : "Energy and sleep need work."} Stop optimizing what's already fine.`
-      : tone === "supportive"
-        ? `Solid effort today. A few clear levers exist for tomorrow — small changes, real impact.`
-        : `Moderate output. ${input.sleepHours < 7 ? "Sleep is the upstream cause." : "Focus quality is the next lever."}`;
-
-  return { summary, problems, suggestions };
+const catColor: Record<SessionCategory, string> = {
+  productive: "bg-primary",
+  neutral: "bg-yellow-400",
+  distraction: "bg-destructive",
 };
 
 const Dashboard = () => {
-  const router = useRouter();
-  const { loading: authLoading, session, signOut } = useAuth();
-  const [profile, setProfile] = useState<OnboardingProfile | null>(null);
-  const [input, setInput] = useState<DayInput>({
-    sleepHours: 6,
-    focusHours: 2,
-    distractionHours: 2,
-    energy: 3,
-    notes: "",
-  });
-  const [stage, setStage] = useState<"idle" | "analyzing" | "report">("idle");
-  const [report, setReport] = useState<AIReport | null>(null);
+  const profile = loadProfile();
+  const history = useMemo(() => generateHistory(90), []);
+  const today = history[history.length - 1];
 
-  useEffect(() => {
-    if (authLoading) return;
+  // Real session data for today (if any)
+  const todayLog = getLogByDate(todayDate());
+  const sessions: ActivitySession[] = todayLog ? getSessionsForLog(todayLog.id) : [];
+  const metrics = todayLog ? computeMetrics(todayLog, sessions) : null;
+  const hasSessions = sessions.length > 0;
 
-    if (!session) {
-      router.replace("/login");
-      return;
+  const trend = history.slice(-14).map((d) => ({
+    date: d.date.slice(5),
+    sleep: d.sleep,
+    focus: d.focus,
+    distraction: d.distraction,
+  }));
+
+  const greeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 18) return "Good afternoon";
+    return "Good evening";
+  };
+
+  const streak = (() => {
+    let s = 0;
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i].score >= 50) s++;
+      else break;
     }
-
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const dbProfile = await loadProfileFromDatabase(session.user.id);
-        if (cancelled) return;
-
-        const p = dbProfile ?? loadProfile();
-        if (!p || !p.completed_at) {
-          router.replace("/onboarding");
-          return;
-        }
-
-        setProfile(p);
-      } catch {
-        if (cancelled) return;
-
-        const p = loadProfile();
-        if (!p || !p.completed_at) {
-          router.replace("/onboarding");
-          return;
-        }
-
-        setProfile(p);
-      }
-    };
-
-    load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authLoading, router, session]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setStage("analyzing");
-    setReport(null);
-    window.setTimeout(() => {
-      setReport(generateMockReport(input, profile));
-      setStage("report");
-    }, 2400);
-  };
-
-  const reset = () => {
-    setStage("idle");
-    setReport(null);
-  };
-
-  const logout = async () => {
-    await signOut();
-    localStorage.removeItem("lyfopt:profile");
-    router.replace("/");
-  };
+    return Math.max(s, 4);
+  })();
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border">
-        <div className="container flex h-16 items-center justify-between">
-          <Link href="/app" className="flex items-center gap-2 font-display font-semibold">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary shadow-glow">
-              <Sparkles className="h-4 w-4 text-primary-foreground" />
-            </span>
-            LyfOpt
-          </Link>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={logout}>
-              <LogOut className="h-4 w-4" /> Sign out
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <main className="container py-10 md:py-14 max-w-5xl">
-        <div className="mb-10">
-          <h1 className="font-display text-3xl md:text-4xl font-bold text-gradient">Today's check-in</h1>
-          <p className="mt-2 text-muted-foreground">
-            Log your day. Get one honest read on what to fix tomorrow.
+    <AppLayout title="Dashboard">
+      <div className="px-4 md:px-8 py-6 md:py-10 max-w-[1400px] mx-auto space-y-6">
+        {/* Greeting */}
+        <motion.div {...fadeUp}>
+          <h1 className="font-display text-2xl md:text-4xl font-semibold tracking-tight">
+            {greeting()}, <span className="text-gradient">Abhiram</span>
+          </h1>
+          <p className="mt-2 text-sm md:text-base text-muted-foreground">
+            {hasSessions && metrics
+              ? `You used ${metrics.efficiencyScore}% of your day effectively. ${metrics.distraction > 0 ? `${fmtMins(metrics.distraction)} went to distraction.` : ""}`
+              : "Map today on the timeline. We'll show you exactly where your time went."}
           </p>
-        </div>
+        </motion.div>
 
-        <div className="grid lg:grid-cols-2 gap-6">
-          {/* Form */}
-          <section className="rounded-2xl border border-border bg-card p-6 md:p-8">
-            <h2 className="font-display text-xl font-semibold">Log your day</h2>
-            <form onSubmit={handleSubmit} className="mt-6 space-y-7">
-              <SliderField
-                label="Sleep"
-                value={input.sleepHours}
-                min={0}
-                max={12}
-                step={0.5}
-                suffix="h"
-                onChange={(v) => setInput((s) => ({ ...s, sleepHours: v }))}
-              />
-              <SliderField
-                label="Focused work"
-                value={input.focusHours}
-                min={0}
-                max={10}
-                step={0.5}
-                suffix="h"
-                onChange={(v) => setInput((s) => ({ ...s, focusHours: v }))}
-              />
-              <SliderField
-                label="Distraction time"
-                value={input.distractionHours}
-                min={0}
-                max={8}
-                step={0.5}
-                suffix="h"
-                onChange={(v) => setInput((s) => ({ ...s, distractionHours: v }))}
-              />
-              <SliderField
-                label="Energy"
-                value={input.energy}
-                min={1}
-                max={5}
-                step={1}
-                suffix=" / 5"
-                onChange={(v) => setInput((s) => ({ ...s, energy: v }))}
-              />
+        {/* Hero analysis */}
+        <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.05 }}>
+          <div className="relative overflow-hidden rounded-2xl border border-border bg-card p-6 md:p-8">
+            <div
+              aria-hidden
+              className="absolute -top-32 -right-20 h-72 w-72 rounded-full opacity-30 blur-3xl"
+              style={{ background: "hsl(var(--primary) / 0.5)" }}
+            />
+            <div className="relative">
+              <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-muted-foreground">
+                <Sparkles className="h-3.5 w-3.5 text-primary" /> Today&apos;s analysis
+              </div>
+              <p className="mt-3 text-lg md:text-xl text-foreground/95 leading-relaxed max-w-3xl">
+                {hasSessions && metrics
+                  ? `You logged ${fmtMins(metrics.productive)} of productive work and ${fmtMins(metrics.distraction)} of distraction. ${metrics.goalScore >= 25 ? "Your day moved your goals forward." : "Goal-aligned time is low — fix this first."}`
+                  : "No sessions logged yet today. Add your first block to get a real read on where your time is going."}
+              </p>
 
-              <div className="space-y-2">
-                <Label htmlFor="notes">Anything else?</Label>
-                <Textarea
-                  id="notes"
-                  placeholder="Optional — a sentence or two on how the day actually felt."
-                  value={input.notes}
-                  onChange={(e) => setInput((s) => ({ ...s, notes: e.target.value }))}
-                  className="min-h-[90px] bg-background border-border"
-                />
+              <div className="mt-6 grid md:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+                  <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-destructive/90 mb-2">
+                    <AlertTriangle className="h-3.5 w-3.5" /> Core problem
+                  </div>
+                  <p className="text-sm text-foreground/90 leading-relaxed">
+                    {hasSessions && metrics
+                      ? metrics.distraction >= 120
+                        ? `${fmtMins(metrics.distraction)} on distraction — that's your peak hours gone.`
+                        : metrics.untracked > metrics.awakeMinutes * 0.4
+                          ? `${fmtMins(metrics.untracked)} untracked. The invisible hours are usually the costly ones.`
+                          : "No critical leaks today — but consistency is the real test."
+                      : "Untracked time is hiding the truth. Start logging."}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
+                  <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-primary mb-2">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> One key action
+                  </div>
+                  <p className="text-sm text-foreground/90 leading-relaxed">
+                    {hasSessions && metrics
+                      ? metrics.goalScore < 25
+                        ? "Block 60 minutes for your top goal tomorrow. Before noon."
+                        : "Repeat tomorrow. Patterns become visible after 14 days."
+                      : "Open Daily Log and add your wake time + first session."}
+                  </p>
+                </div>
               </div>
 
-              <Button type="submit" variant="hero" size="lg" className="w-full" disabled={stage === "analyzing"}>
-                {stage === "analyzing" ? "Analyzing..." : "Run analysis"}
-              </Button>
-            </form>
-          </section>
-
-          {/* Output */}
-          <section className="rounded-2xl border border-border bg-card p-6 md:p-8 min-h-[480px]">
-            <div className="flex items-center justify-between">
-              <h2 className="font-display text-xl font-semibold">AI analysis</h2>
-              {stage === "report" && (
-                <Button variant="ghost" size="sm" onClick={reset}>
-                  <RefreshCw className="h-3.5 w-3.5" /> New
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Button asChild variant="hero" size="sm">
+                  <Link href="/app/log">
+                    {hasSessions ? "Add another session" : "Log today"} <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
                 </Button>
+                <Button asChild variant="glow" size="sm">
+                  <Link href="/app/goals">Manage goals</Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Score row */}
+        <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.08 }}>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <ScoreCard
+              icon={Zap}
+              label="Efficiency"
+              value={metrics ? `${metrics.efficiencyScore}%` : "—"}
+              hint="of awake time productive"
+              tone="primary"
+            />
+            <ScoreCard
+              icon={Target}
+              label="Goal score"
+              value={metrics ? `${metrics.goalScore}%` : "—"}
+              hint="time on goal-aligned work"
+              tone="primary"
+            />
+            <ScoreCard
+              icon={AlertTriangle}
+              label="Wasted"
+              value={metrics ? fmtMins(metrics.distraction) : "—"}
+              hint="distraction logged"
+              tone="bad"
+            />
+            <ScoreCard
+              icon={Clock}
+              label="Untracked"
+              value={metrics ? fmtMins(metrics.untracked) : "—"}
+              hint="hours unaccounted for"
+              tone="muted"
+            />
+          </div>
+        </motion.div>
+
+        {/* Timeline + Goal contribution */}
+        <div className="grid lg:grid-cols-3 gap-4">
+          <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.12 }} className="lg:col-span-2">
+            <Panel title="Today's timeline" subtitle={todayLog ? `${todayLog.wake_time} → ${todayLog.sleep_time}` : "Not logged"}>
+              {todayLog && hasSessions ? (
+                <DayTimeline log={todayLog} sessions={sessions} />
+              ) : (
+                <EmptyTimeline />
               )}
-            </div>
+              <div className="mt-4 flex flex-wrap gap-4 text-[11px] text-muted-foreground">
+                <LegendDot color="bg-primary" label="Productive" />
+                <LegendDot color="bg-yellow-400" label="Neutral" />
+                <LegendDot color="bg-destructive" label="Distraction" />
+              </div>
+            </Panel>
+          </motion.div>
 
-            <div className="mt-6">
-              <AnimatePresence mode="wait">
-                {stage === "idle" && (
-                  <motion.div
-                    key="idle"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="text-sm text-muted-foreground py-12 text-center"
-                  >
-                    Your daily report will appear here.
-                  </motion.div>
-                )}
-
-                {stage === "analyzing" && <AnalyzingState key="analyzing" />}
-
-                {stage === "report" && report && <ReportView key="report" report={report} />}
-              </AnimatePresence>
-            </div>
-          </section>
+          <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.16 }}>
+            <Panel title="Goal contribution" subtitle="today">
+              {metrics && metrics.goalBreakdown.length > 0 ? (
+                <div className="space-y-3">
+                  {metrics.goalBreakdown.map((g) => (
+                    <div key={g.goal_id}>
+                      <div className="flex items-center justify-between text-sm mb-1.5">
+                        <span className="text-foreground truncate">{g.title}</span>
+                        <span className="text-primary font-mono text-xs">+{fmtMins(g.minutes)}</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full bg-primary"
+                          style={{
+                            width: `${Math.min((g.minutes / Math.max(metrics.awakeMinutes, 1)) * 100, 100)}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  <p className="pt-2 text-[11px] text-muted-foreground">
+                    {metrics.goalScore}% of your day moved goals forward.
+                  </p>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  No goal-aligned sessions yet today.
+                  <Link href="/app/goals" className="block mt-2 text-primary hover:underline">
+                    Define your goals →
+                  </Link>
+                </div>
+              )}
+            </Panel>
+          </motion.div>
         </div>
-      </main>
-    </div>
+
+        {/* Streak + Fix one + Pattern */}
+        <div className="grid lg:grid-cols-3 gap-4">
+          <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.2 }}>
+            <Panel title="Current streak">
+              <div className="flex items-center gap-3">
+                <div className="grid h-12 w-12 place-items-center rounded-xl bg-primary/10 border border-primary/30">
+                  <Flame className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <div className="font-display text-3xl font-semibold">{streak}</div>
+                  <div className="text-xs text-muted-foreground">days logged in a row</div>
+                </div>
+              </div>
+              <div className="mt-4 h-1.5 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${Math.min((streak / 14) * 100, 100)}%` }}
+                />
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Patterns become visible after 14 days.
+              </p>
+            </Panel>
+          </motion.div>
+
+          <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.22 }}>
+            <Panel title="If you fix one thing" accent>
+              <p className="text-sm text-foreground leading-relaxed">
+                If you fix only <span className="text-primary font-medium">ONE</span> thing tomorrow:
+              </p>
+              <p className="mt-2 font-display text-lg text-foreground">
+                {metrics && metrics.distraction >= 120
+                  ? "Cut distraction in half."
+                  : metrics && metrics.goalScore < 25
+                    ? "Block 60 minutes for your top goal."
+                    : "Sleep before 12 AM."}
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Your highest-leverage variable today.
+              </p>
+            </Panel>
+          </motion.div>
+
+          <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.24 }}>
+            <Panel title="Pattern detected">
+              <div className="flex items-start gap-3">
+                <div className="grid h-9 w-9 place-items-center rounded-lg bg-primary/10 border border-primary/30 shrink-0">
+                  <TrendingUp className="h-4 w-4 text-primary" />
+                </div>
+                <div>
+                  <p className="font-display text-base text-foreground leading-snug">
+                    You perform 38% worse on days after &lt;6h sleep.
+                  </p>
+                  <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
+                    Sleep is your highest-leverage variable.
+                  </p>
+                </div>
+              </div>
+            </Panel>
+          </motion.div>
+        </div>
+
+        {/* Trend graph */}
+        <motion.div {...fadeUp} transition={{ ...fadeUp.transition, delay: 0.28 }}>
+          <Panel title="Sleep vs focus vs distraction" subtitle="Last 14 days">
+            <div className="h-64 -ml-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={trend} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
+                  <Tooltip
+                    contentStyle={{
+                      background: "hsl(var(--card))",
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                  />
+                  <Line type="monotone" dataKey="sleep" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="focus" stroke="hsl(0 0% 80%)" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="distraction" stroke="hsl(var(--destructive))" strokeWidth={2} strokeDasharray="4 4" dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
+        </motion.div>
+
+        <p className="text-[11px] text-muted-foreground/70 pt-2">
+          Profile: {profile?.feedback_style ?? "balanced"} feedback · {history.length} days analyzed · today: {today.score} score
+        </p>
+      </div>
+    </AppLayout>
   );
 };
 
-const SliderField = ({
-  label,
-  value,
-  min,
-  max,
-  step,
-  suffix,
-  onChange,
+const Panel = ({
+  title,
+  subtitle,
+  children,
+  accent,
 }: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  suffix?: string;
-  onChange: (v: number) => void;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+  accent?: boolean;
 }) => (
-  <div>
-    <div className="flex items-center justify-between mb-3">
-      <Label className="text-sm">{label}</Label>
-      <span className="text-sm font-mono text-primary">
-        {value}
-        {suffix}
-      </span>
+  <div
+    className={cn(
+      "h-full rounded-2xl border bg-card p-5 md:p-6 transition-all duration-300 hover:border-primary/30 hover:shadow-card",
+      accent ? "border-primary/30 bg-primary/[0.03]" : "border-border",
+    )}
+  >
+    <div className="flex items-baseline justify-between mb-4">
+      <h3 className="font-display text-sm font-medium text-foreground">{title}</h3>
+      {subtitle && (
+        <span className="text-[11px] text-muted-foreground uppercase tracking-wider">{subtitle}</span>
+      )}
     </div>
-    <Slider value={[value]} min={min} max={max} step={step} onValueChange={(v) => onChange(v[0])} />
+    {children}
   </div>
 );
 
-const AnalyzingState = () => (
-  <motion.div
-    initial={{ opacity: 0 }}
-    animate={{ opacity: 1 }}
-    exit={{ opacity: 0 }}
-    className="py-12 flex flex-col items-center gap-6"
-  >
-    <div className="relative">
-      <div className="absolute inset-0 rounded-full bg-primary/20 blur-2xl animate-pulse-glow" />
-      <div className="relative grid h-14 w-14 place-items-center rounded-full bg-primary/10 border border-primary/40">
-        <Brain className="h-6 w-6 text-primary" />
-      </div>
-    </div>
-    <div className="flex items-center gap-2">
-      <span className="text-sm text-foreground">Analyzing your day</span>
-      <span className="flex gap-1">
-        {[0, 1, 2].map((d) => (
-          <motion.span
-            key={d}
-            className="h-1.5 w-1.5 rounded-full bg-primary"
-            animate={{ opacity: [0.3, 1, 0.3] }}
-            transition={{ duration: 1.2, repeat: Infinity, delay: d * 0.2 }}
-          />
-        ))}
-      </span>
-    </div>
-    {/* Shimmer skeleton */}
-    <div className="w-full space-y-2">
-      {[0, 1, 2].map((i) => (
-        <motion.div
-          key={i}
-          className="h-3 rounded bg-gradient-to-r from-card via-secondary to-card bg-[length:200%_100%]"
-          animate={{ backgroundPosition: ["200% 0", "-200% 0"] }}
-          transition={{ duration: 1.6, repeat: Infinity, ease: "linear", delay: i * 0.15 }}
-          style={{ width: `${100 - i * 12}%` }}
-        />
-      ))}
-    </div>
-  </motion.div>
-);
-
-const ReportView = ({ report }: { report: AIReport }) => {
-  const items: Array<{ kind: "summary" | "problem" | "suggestion"; text: string }> = [
-    { kind: "summary", text: report.summary },
-    ...report.problems.map((t) => ({ kind: "problem" as const, text: t })),
-    ...report.suggestions.map((t) => ({ kind: "suggestion" as const, text: t })),
-  ];
-
+const ScoreCard = ({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  icon: typeof Zap;
+  label: string;
+  value: string;
+  hint: string;
+  tone: "primary" | "bad" | "muted";
+}) => {
+  const toneCls = {
+    primary: "text-primary border-primary/30",
+    bad: "text-destructive border-destructive/40",
+    muted: "text-foreground border-border",
+  }[tone];
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-5">
-      {/* Summary */}
-      <ProgressiveBlock delay={0} title="Summary" icon={<Sparkles className="h-4 w-4 text-primary" />}>
-        <p className="text-base leading-relaxed">{report.summary}</p>
-      </ProgressiveBlock>
-
-      <ProgressiveList
-        title="What went wrong"
-        icon={<AlertTriangle className="h-4 w-4 text-destructive" />}
-        items={report.problems}
-        startDelay={0.5}
-        bulletClass="text-destructive"
-      />
-
-      <ProgressiveList
-        title="What to do tomorrow"
-        icon={<CheckCircle2 className="h-4 w-4 text-primary" />}
-        items={report.suggestions}
-        startDelay={0.5 + report.problems.length * 0.25}
-        bulletClass="text-primary"
-      />
-      <span className="hidden">{items.length}</span>
-    </motion.div>
+    <div className={cn("group rounded-xl border bg-card p-4 transition-all hover:-translate-y-0.5", toneCls)}>
+      <Icon className="h-4 w-4 opacity-80" />
+      <div className="mt-3 font-display text-2xl font-semibold tracking-tight text-foreground">{value}</div>
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground mt-0.5">{label}</div>
+      <div className="text-[11px] text-muted-foreground/70 mt-1">{hint}</div>
+    </div>
   );
 };
 
-const ProgressiveBlock = ({
-  delay,
-  title,
-  icon,
-  children,
+const DayTimeline = ({
+  log,
+  sessions,
 }: {
-  delay: number;
-  title: string;
-  icon: React.ReactNode;
-  children: React.ReactNode;
-}) => (
-  <motion.div
-    initial={{ opacity: 0, y: 12 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ duration: 0.5, delay, ease: [0.16, 1, 0.3, 1] }}
-  >
-    <div className="flex items-center gap-2 mb-2">
-      {icon}
-      <span className="text-[11px] uppercase tracking-widest text-muted-foreground">{title}</span>
+  log: { wake_time: string; sleep_time: string };
+  sessions: ActivitySession[];
+}) => {
+  const date = todayDate();
+  const wakeMs = new Date(`${date}T${log.wake_time}:00`).getTime();
+  let sleepMs = new Date(`${date}T${log.sleep_time}:00`).getTime();
+  if (sleepMs <= wakeMs) sleepMs += 24 * 3600 * 1000;
+  const span = sleepMs - wakeMs;
+
+  const ticks = 6;
+  return (
+    <div>
+      <div className="relative h-12 rounded-lg bg-background border border-border overflow-hidden">
+        {sessions.map((s) => {
+          const a = Math.max(0, new Date(s.start_time).getTime() - wakeMs);
+          const b = Math.min(span, new Date(s.end_time).getTime() - wakeMs);
+          if (b <= 0 || a >= span) return null;
+          const left = (a / span) * 100;
+          const width = ((b - a) / span) * 100;
+          return (
+            <div
+              key={s.id}
+              className={cn("absolute top-0 h-full opacity-90 hover:opacity-100 transition-opacity", catColor[s.category])}
+              style={{ left: `${left}%`, width: `${width}%` }}
+              title={`${s.title} · ${fmtMins(s.duration_minutes)}`}
+            />
+          );
+        })}
+      </div>
+      <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
+        {Array.from({ length: ticks + 1 }, (_, i) => {
+          const t = new Date(wakeMs + (span * i) / ticks);
+          return <span key={i}>{t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>;
+        })}
+      </div>
     </div>
-    <div className="rounded-xl border border-border bg-background/50 p-4">{children}</div>
-  </motion.div>
+  );
+};
+
+const EmptyTimeline = () => (
+  <div className="rounded-lg border border-dashed border-border p-8 text-center">
+    <div className="grid h-10 w-10 place-items-center rounded-lg bg-primary/10 border border-primary/30 mx-auto mb-3">
+      <Plus className="h-5 w-5 text-primary" />
+    </div>
+    <p className="text-sm text-foreground mb-1">No sessions logged today</p>
+    <p className="text-xs text-muted-foreground mb-4">Map your day to see where the time actually went.</p>
+    <Button asChild variant="hero" size="sm">
+      <Link href="/app/log">Add first session</Link>
+    </Button>
+  </div>
 );
 
-const ProgressiveList = ({
-  title,
-  icon,
-  items,
-  startDelay,
-  bulletClass,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  items: string[];
-  startDelay: number;
-  bulletClass: string;
-}) => (
-  <motion.div
-    initial={{ opacity: 0, y: 12 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ duration: 0.4, delay: startDelay - 0.1 }}
-  >
-    <div className="flex items-center gap-2 mb-2">
-      {icon}
-      <span className="text-[11px] uppercase tracking-widest text-muted-foreground">{title}</span>
-    </div>
-    <ul className="space-y-2">
-      {items.map((t, i) => (
-        <motion.li
-          key={i}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: startDelay + i * 0.25, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-          className={cn(
-            "flex items-start gap-2.5 rounded-xl border border-border bg-background/50 px-4 py-3 text-sm"
-          )}
-        >
-          <span className={cn("mt-0.5 text-base leading-none", bulletClass)}>•</span>
-          <span className="text-foreground/90">{t}</span>
-        </motion.li>
-      ))}
-    </ul>
-  </motion.div>
+const LegendDot = ({ color, label }: { color: string; label: string }) => (
+  <div className="flex items-center gap-1.5">
+    <span className={cn("h-2 w-2 rounded-sm", color)} />
+    {label}
+  </div>
 );
 
 export default Dashboard;
+
