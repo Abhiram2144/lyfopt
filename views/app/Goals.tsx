@@ -22,6 +22,9 @@ const Goals = () => {
   const [category, setCategory] = useState("study");
   const [type, setType] = useState<"short_term" | "long_term">("long_term");
   const [keywords, setKeywords] = useState("");
+  const [openEnded, setOpenEnded] = useState(true);
+  const [targetValue, setTargetValue] = useState<string>("");
+  const [targetUnit, setTargetUnit] = useState<string>("times/week");
 
   const create = () => {
     if (!title.trim()) return;
@@ -29,11 +32,15 @@ const Goals = () => {
       title: title.trim(),
       category,
       type,
+      open_ended: openEnded,
+      target_value: targetValue ? Number(targetValue) : null,
+      target_unit: targetUnit || null,
       keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
     });
     setGoals(getGoals());
     setTitle("");
     setKeywords("");
+    setTargetValue("");
   };
 
   const remove = (id: string) => {
@@ -83,6 +90,15 @@ const Goals = () => {
                 </SelectContent>
               </Select>
             </div>
+            <div className="md:col-span-2 space-y-2">
+              <Label className="text-xs">Goal kind</Label>
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={openEnded} onChange={(e) => setOpenEnded(e.target.checked)} />
+                  <span className="text-sm ml-1">Open-ended</span>
+                </label>
+              </div>
+            </div>
             <div className="md:col-span-2 flex items-end">
               <Button onClick={create} variant="hero" className="w-full h-10" disabled={!title.trim()}>
                 <Plus className="h-4 w-4" /> Add
@@ -97,6 +113,18 @@ const Goals = () => {
                 className="bg-background border-border h-10"
               />
             </div>
+            {!openEnded && (
+              <div className="md:col-span-12 grid md:grid-cols-3 gap-3 mt-2">
+                <div className="space-y-2">
+                  <Label className="text-xs">Target value</Label>
+                  <Input value={targetValue} onChange={(e) => setTargetValue(e.target.value)} placeholder="15" className="h-10" />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label className="text-xs">Unit</Label>
+                  <Input value={targetUnit} onChange={(e) => setTargetUnit(e.target.value)} placeholder="km/week or times/week" className="h-10" />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -115,7 +143,7 @@ const Goals = () => {
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-foreground">{g.title}</div>
                 <div className="text-[11px] text-muted-foreground">
-                  {g.type.replace("_", " ")} · {g.category} · keywords: {g.keywords.join(", ") || "—"}
+                  {g.type.replace("_", " ")} · {g.category} · {g.open_ended ? "Open-ended" : `${g.target_value ?? "—"} ${g.target_unit ?? ""}`} · keywords: {g.keywords.join(", ") || "—"}
                 </div>
               </div>
               <button

@@ -7,6 +7,7 @@ import { AppLayout } from "@/components/dashboard/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { loadProfile, saveProfile, type FeedbackStyle } from "@/lib/onboarding";
+import { getUserPreferences, saveUserPreferences } from "@/lib/sessions";
 import { Check, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -28,9 +29,12 @@ const Settings = () => {
   const profile = loadProfile();
   const [plan, setPlan] = useState("pro");
   const [style, setStyle] = useState<FeedbackStyle>(profile?.feedback_style ?? "balanced");
+  const prefs = getUserPreferences();
+  const [gamingIsDistraction, setGamingIsDistraction] = useState<boolean>(prefs?.gaming_is_distraction ?? true);
 
   const save = () => {
     if (profile) saveProfile({ ...profile, feedback_style: style });
+    saveUserPreferences({ gaming_is_distraction: gamingIsDistraction });
     toast.success("Settings saved");
   };
 
@@ -70,6 +74,21 @@ const Settings = () => {
                 <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{p.desc}</p>
               </button>
             ))}
+          </div>
+        </Section>
+
+        <Section title="Gaming preference">
+          <div className="rounded-xl border border-border bg-card p-4 flex items-center justify-between">
+            <div>
+              <div className="text-sm font-medium">Is gaming a distraction?</div>
+              <p className="text-xs text-muted-foreground">If yes, LyfOpt will count gaming-like sessions as distractions for metrics.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={gamingIsDistraction} onChange={(e) => setGamingIsDistraction(e.target.checked)} />
+                <span className="text-sm">Yes</span>
+              </label>
+            </div>
           </div>
         </Section>
 

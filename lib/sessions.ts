@@ -30,6 +30,10 @@ export interface Goal {
   is_active: boolean;
   created_at: string;
   keywords: string[]; // inline goal_activity_map
+  // New fields: open_ended vs measurable
+  open_ended?: boolean;
+  target_value?: number | null;
+  target_unit?: string | null;
 }
 
 export interface DailyAnalysis {
@@ -52,6 +56,8 @@ const KEYS = {
   logs: "lyfopt:logs",
   sessions: "lyfopt:sessions",
   goals: "lyfopt:goals",
+  prefs: "lyfopt:prefs",
+  monthly: "lyfopt:monthly",
   analysis: "lyfopt:analysis",
 };
 
@@ -98,15 +104,30 @@ export const getSessionsForLog = (log_id: string) =>
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
 
 export const addSession = (
-  s: Omit<ActivitySession, "id" | "created_at" | "duration_minutes">,
+  s: Omit<ActivitySession, "id" | "created_at" | "duration_minutes"> & { category?: SessionCategory },
 ): ActivitySession => {
   const duration = Math.max(
     0,
     Math.round((new Date(s.end_time).getTime() - new Date(s.start_time).getTime()) / 60000),
   );
+
+  // Simple heuristic to avoid asking users for a 'type':
+  // - If title matches a goal -> productive
+  // - If title contains social/gaming keywords -> distraction
+  // - Otherwise neutral
+  const t = s.title.toLowerCase();
+  const social = ["instagram", "tiktok", "twitter", "x", "youtube", "reddit", "facebook", "snap", "snapchat", "discord", "game", "gaming", "fortnite", "xbox", "playstation"];
+  let category: SessionCategory = s.category ?? "neutral";
+  if (!s.category) {
+    if (matchGoalForTitle(s.title)) category = "productive";
+    else if (social.some((k) => t.includes(k))) category = "distraction";
+    else category = "neutral";
+  }
+
   const created: ActivitySession = {
     ...s,
     id: uid(),
+    category,
     duration_minutes: duration,
     created_at: new Date().toISOString(),
   };
@@ -161,6 +182,29 @@ export const addGoal = (g: Omit<Goal, "id" | "created_at" | "is_active"> & { is_
   return created;
 };
 
+// ---------- Preferences ----------
+export interface UserPreferences {
+  gaming_is_distraction?: boolean;
+}
+
+export const getUserPreferences = (): UserPreferences => read<UserPreferences>(KEYS.prefs, {});
+export const saveUserPreferences = (p: UserPreferences) => write(KEYS.prefs, p);
+
+// ---------- Monthly reviews ----------
+export interface MonthlyReview {
+  id: string;
+  month_start: string; // YYYY-MM-01
+  answers: Record<string, string>;
+  created_at: string;
+}
+
+export const getMonthlyReviews = (): MonthlyReview[] => read<MonthlyReview[]>(KEYS.monthly, []);
+export const addMonthlyReview = (r: Omit<MonthlyReview, "id" | "created_at">): MonthlyReview => {
+  const created: MonthlyReview = { ...r, id: uid(), created_at: new Date().toISOString() };
+  write(KEYS.monthly, [...getMonthlyReviews(), created]);
+  return created;
+};
+
 export const deleteGoal = (id: string) => saveGoals(getGoals().filter((g) => g.id !== id));
 
 // ---------- Matching ----------
@@ -202,7 +246,9 @@ export const computeMetrics = (
   let awake = sh * 60 + sm - (wh * 60 + wm);
   if (awake <= 0) awake += 24 * 60;
   const tracked = productive + distraction + neutral;
-  const untracked = Math.max(0, awake - tracked);
+  // Consider 2 hours for eating as non-wasted time
+  const raw_untracked = Math.max(0, awake - tracked - 120);
+  const untracked = Math.max(0, raw_untracked);
 
   // Goal contribution
   const goalMap = new Map<string, { title: string; minutes: number }>();
@@ -234,6 +280,43 @@ export const computeMetrics = (
     goalBreakdown: [...goalMap.entries()].map(([goal_id, v]) => ({ goal_id, ...v })),
     topActivity: top ? { title: top[0], minutes: top[1] } : null,
   };
+};
+
+// ---------- Streaks ----------
+export const computeStreaks = (logs: DailyLog[]) => {
+  const dates = new Set(logs.map((l) => l.date));
+  const sorted = logs.map((l) => l.date).sort();
+  let best = 0;
+  let current = 0;
+  let lastDate: string | null = null;
+
+  for (const d of sorted) {
+    if (!lastDate) {
+      current = 1;
+    } else {
+      const prev = new Date(lastDate);
+      prev.setDate(prev.getDate() + 1);
+      const expected = prev.toISOString().slice(0, 10);
+      if (d === expected) current += 1;
+      else current = 1;
+    }
+    best = Math.max(best, current);
+    lastDate = d;
+  }
+
+  // current streak up to today
+  let currentUpToToday = 0;
+  const today = new Date();
+  let cursor = new Date(today);
+  while (true) {
+    const key = cursor.toISOString().slice(0, 10);
+    if (dates.has(key)) {
+      currentUpToToday += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    } else break;
+  }
+
+  return { current: currentUpToToday, best };
 };
 
 export const fmtMins = (m: number) => {

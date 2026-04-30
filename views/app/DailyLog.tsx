@@ -7,13 +7,7 @@ import { AppLayout } from "@/components/dashboard/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+// select removed: sessions are auto-categorized via heuristics
 import {
   Sparkles,
   Plus,
@@ -58,7 +52,6 @@ const DailyLog = () => {
   const [title, setTitle] = useState("");
   const [start, setStart] = useState("09:00");
   const [end, setEnd] = useState("11:00");
-  const [category, setCategory] = useState<SessionCategory>("productive");
 
   const [sessions, setSessions] = useState<ActivitySession[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -92,7 +85,6 @@ const DailyLog = () => {
     addSession({
       log_id: logId,
       title: title.trim(),
-      category,
       start_time: startIso,
       end_time: endIso,
     });
@@ -164,19 +156,7 @@ const DailyLog = () => {
               <Label className="text-xs">End</Label>
               <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="bg-background border-border h-10" />
             </div>
-            <div className="md:col-span-2 space-y-2">
-              <Label className="text-xs">Type</Label>
-              <Select value={category} onValueChange={(v) => setCategory(v as SessionCategory)}>
-                <SelectTrigger className="bg-background border-border h-10">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="productive">Productive</SelectItem>
-                  <SelectItem value="neutral">Neutral</SelectItem>
-                  <SelectItem value="distraction">Distraction</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Type removed: sessions are auto-categorized */}
             <div className="md:col-span-2 flex items-end">
               <Button onClick={addOne} variant="hero" className="w-full h-10" disabled={!title.trim()}>
                 <Plus className="h-4 w-4" /> Add
@@ -249,7 +229,7 @@ const DailyLog = () => {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <Stat label="Productive" value={fmtMins(metrics.productive)} accent="text-primary" />
             <Stat label="Distraction" value={fmtMins(metrics.distraction)} accent="text-destructive" />
-            <Stat label="Untracked" value={fmtMins(metrics.untracked)} accent="text-muted-foreground" />
+            <Stat label="Wasted" value={fmtMins(metrics.untracked)} accent="text-muted-foreground" />
             <Stat label="Goal score" value={`${metrics.goalScore}%`} accent="text-primary" />
           </div>
         )}
