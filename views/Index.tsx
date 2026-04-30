@@ -27,29 +27,22 @@ const Hero = () => (
       transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
     />
     <div className="container relative pt-24 pb-24 md:pt-32 md:pb-32">
-      <Reveal>
-        <div className="mx-auto max-w-fit flex items-center gap-2 rounded-full border border-border bg-secondary/40 px-4 py-1.5 text-xs text-muted-foreground">
-          <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse-glow" />
-          AI Life Optimizer — now in early access
-        </div>
-      </Reveal>
       <Reveal delay={0.1}>
         <h1 className="mt-6 text-center font-display text-4xl md:text-6xl lg:text-7xl font-bold tracking-tight text-gradient">
-          Your day, decoded.<br />
-          The truth about <span className="text-gradient-accent">what's holding you back.</span>
+          AI<br />
+          that understands your life <span className="text-gradient-accent">better than you do.</span>
         </h1>
       </Reveal>
       <Reveal delay={0.2}>
         <p className="mt-6 mx-auto max-w-2xl text-center text-base md:text-lg text-muted-foreground">
-          LyfOpt is an AI that reads your sleep, work, distractions and energy — then tells you,
-          honestly, the one thing slowing you down and exactly how to fix it.
+          Track your day. Let LyfOpt analyze your patterns and give you clear, actionable insights to improve your focus, discipline, and progress.
         </p>
       </Reveal>
       <Reveal delay={0.3}>
         <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
           <Button asChild variant="hero" size="lg" className="group">
             <Link href="/signup">
-              Get Started Free
+              Start Analyzing
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
             </Link>
           </Button>
