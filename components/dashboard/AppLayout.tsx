@@ -3,7 +3,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppSidebar } from "./AppSidebar";
-import { loadProfile } from "@/lib/onboarding";
+import { loadProfileFromDatabase } from "@/lib/onboarding";
 import { useAuth } from "@/components/site/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { LogOut } from "lucide-react";
@@ -21,13 +21,17 @@ export const AppLayout = ({ children, title }: { children: ReactNode; title?: st
       return;
     }
 
-    const p = loadProfile();
-    if (!p || !p.completed_at) {
-      router.replace("/onboarding");
-      return;
-    }
+    const load = async () => {
+      const userId = session.user.id;
+      const profile = await loadProfileFromDatabase(userId);
+      if (!profile || !profile.completed_at) {
+        router.replace("/onboarding");
+        return;
+      }
+      setReady(true);
+    };
 
-    setReady(true);
+    void load();
   }, [loading, router, session]);
 
   const logout = async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
@@ -16,15 +16,19 @@ import {
   Target,
   Zap,
 } from "lucide-react";
-import { loadProfile } from "@/lib/onboarding";
+import { loadProfileFromDatabase, type OnboardingProfile } from "@/lib/onboarding";
+import { getErrorMessage } from "@/lib/error";
 import {
   computeMetrics,
+  fetchDailyLogsFromDb,
+  fetchGoalsFromDb,
+  fetchSessionsFromDb,
   fmtMins,
-  getLogs,
-  getSessionsForLog,
   type ComputedMetrics,
   type DailyLog,
+  type Goal,
 } from "@/lib/sessions";
+import { useAuth } from "@/components/site/AuthProvider";
 import { cn } from "@/lib/utils";
 
 const buildReport = (
@@ -80,32 +84,65 @@ const buildReport = (
 
 const AnalysisResult = () => {
   const router = useRouter();
+  const { user, loading } = useAuth();
   const [stage, setStage] = useState<"analyzing" | "report">("analyzing");
-  const profile = loadProfile();
-
-  const { log, metrics } = useMemo(() => {
-    const id = sessionStorage.getItem("lyfopt:analyze:logId");
-    const logs = getLogs();
-    const found = id ? logs.find((l) => l.id === id) : logs[logs.length - 1];
-    if (!found) return { log: null, metrics: null };
-    const sessions = getSessionsForLog(found.id);
-    return { log: found, metrics: computeMetrics(found, sessions) };
-  }, []);
+  const [log, setLog] = useState<DailyLog | null>(null);
+  const [metrics, setMetrics] = useState<ComputedMetrics | null>(null);
+  const [profile, setProfile] = useState<OnboardingProfile | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!log) {
-      router.replace("/app/log");
-      return;
-    }
-    const t = setTimeout(() => setStage("report"), 2000);
-    return () => clearTimeout(t);
-  }, [log, router]);
+    let active = true;
+
+    const load = async () => {
+      if (loading || !user) return;
+
+      const id = sessionStorage.getItem("lyfopt:analyze:logId");
+      try {
+        const [logs, sessions, goals] = await Promise.all([
+          fetchDailyLogsFromDb(),
+          fetchSessionsFromDb(),
+          fetchGoalsFromDb(),
+        ]);
+        const found = id ? logs.find((entry) => entry.id === id) : logs[logs.length - 1] ?? null;
+        if (!found) {
+          if (active) router.replace("/app/log");
+          return;
+        }
+        const foundSessions = sessions.filter((session) => session.log_id === found.id);
+        const reportMetrics = computeMetrics(found, foundSessions, goals);
+        const savedProfile = await loadProfileFromDatabase(user.id);
+
+        if (!active) return;
+        setLog(found);
+        setMetrics(reportMetrics);
+        setProfile(savedProfile);
+        const timer = setTimeout(() => setStage("report"), 2000);
+        return () => clearTimeout(timer);
+      } catch (error) {
+        if (!active) return;
+        setLoadError(getErrorMessage(error));
+      }
+    };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
+  }, [loading, router, user]);
 
   const report = log && metrics ? buildReport(log, metrics, profile?.feedback_style ?? "balanced") : null;
 
   return (
     <AppLayout title="Analysis">
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-3xl mx-auto">
+        {loadError && (
+          <div className="mb-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
+            {loadError}
+          </div>
+        )}
+
         <Link
           href="/app/log"
           className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-6"
@@ -145,7 +182,7 @@ const AnalysisResult = () => {
                 {[0, 1, 2].map((i) => (
                   <motion.div
                     key={i}
-                    className="h-2.5 rounded bg-gradient-to-r from-card via-secondary to-card bg-[length:200%_100%]"
+                    className="h-2.5 rounded bg-linear-to-r from-card via-secondary to-card bg-size-[200%_100%]"
                     animate={{ backgroundPosition: ["200% 0", "-200% 0"] }}
                     transition={{ duration: 1.6, repeat: Infinity, ease: "linear", delay: i * 0.15 }}
                     style={{ width: `${100 - i * 12}%` }}

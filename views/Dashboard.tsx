@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Line,
@@ -27,16 +27,21 @@ import Link from "next/link";
 import { AppLayout } from "@/components/dashboard/AppLayout";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { generateHistory } from "@/lib/mockData";
-import { loadProfile } from "@/lib/onboarding";
+import { useAuth } from "@/components/site/AuthProvider";
 import {
+  buildHistoryFromDb,
   computeMetrics,
+  computeStreaks,
+  fetchDailyLogsFromDb,
+  fetchGoalsFromDb,
+  fetchSessionsFromDb,
   fmtMins,
-  getLogByDate,
-  getSessionsForLog,
   todayDate,
   type ActivitySession,
+  type DbHistoryEntry,
+  type Goal,
   type SessionCategory,
+  type DailyLog,
 } from "@/lib/sessions";
 
 const fadeUp = {
@@ -52,22 +57,60 @@ const catColor: Record<SessionCategory, string> = {
 };
 
 const Dashboard = () => {
-  const profile = loadProfile();
-  const history = useMemo(() => generateHistory(90), []);
-  const today = history[history.length - 1];
+  const { user, loading } = useAuth();
+  const [logs, setLogs] = useState<DailyLog[]>([]);
+  const [sessions, setSessions] = useState<ActivitySession[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Real session data for today (if any)
-  const todayLog = getLogByDate(todayDate());
-  const sessions: ActivitySession[] = todayLog ? getSessionsForLog(todayLog.id) : [];
-  const metrics = todayLog ? computeMetrics(todayLog, sessions) : null;
-  const hasSessions = sessions.length > 0;
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (loading || !user) return;
 
-  const trend = history.slice(-14).map((d) => ({
-    date: d.date.slice(5),
-    sleep: d.sleep,
-    focus: d.focus,
-    distraction: d.distraction,
+      try {
+        const [loadedLogs, loadedSessions, loadedGoals] = await Promise.all([
+          fetchDailyLogsFromDb(),
+          fetchSessionsFromDb(),
+          fetchGoalsFromDb(),
+        ]);
+        if (!active) return;
+        setLogs(loadedLogs);
+        setSessions(loadedSessions);
+        setGoals(loadedGoals);
+      } catch (error) {
+        if (!active) return;
+        const message =
+          error instanceof Error
+            ? error.message
+            : typeof error === "string"
+              ? error
+              : "Unable to load your dashboard right now.";
+        setLoadError(message);
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [loading, user]);
+
+  const history = useMemo(() => buildHistoryFromDb(logs, sessions, goals).slice(-90), [logs, sessions, goals]);
+  const todayLog = logs.find((entry) => entry.date === todayDate()) ?? null;
+  const todaySessions = todayLog ? sessions.filter((session) => session.log_id === todayLog.id) : [];
+  const metrics = todayLog ? computeMetrics(todayLog, todaySessions, goals) : null;
+  const hasSessions = todaySessions.length > 0;
+
+  const trend = history.slice(-14).map((entry) => ({
+    date: entry.date.slice(5),
+    sleep: entry.sleep,
+    focus: entry.focus,
+    distraction: entry.distraction,
   }));
+
+  const streak = computeStreaks(logs).current;
+  const feedbackStyle = user?.user_metadata?.feedback_style ?? "balanced";
+  const todayScore = history.at(-1)?.score ?? (metrics ? Math.max(0, Math.min(100, Math.round(metrics.efficiencyScore * 0.65 + metrics.goalScore * 0.35))) : null);
 
   const greeting = () => {
     const h = new Date().getHours();
@@ -76,22 +119,28 @@ const Dashboard = () => {
     return "Good evening";
   };
 
-  const streak = (() => {
-    let s = 0;
-    for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i].score >= 50) s++;
-      else break;
-    }
-    return Math.max(s, 4);
-  })();
+  // const streak = (() => {
+  //   let s = 0;
+  //   for (let i = history.length - 1; i >= 0; i--) {
+  //     if (history[i].score >= 50) s++;
+  //     else break;
+  //   }
+  //   return Math.max(s, 4);
+  // })();
 
   return (
     <AppLayout title="Dashboard">
-      <div className="px-4 md:px-8 py-6 md:py-10 max-w-[1400px] mx-auto space-y-6">
+      <div className="px-4 md:px-8 py-6 md:py-10 max-w-350 mx-auto space-y-6">
+        {loadError && (
+          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
+            {loadError}
+          </div>
+        )}
+
         {/* Greeting */}
         <motion.div {...fadeUp}>
           <h1 className="font-display text-2xl md:text-4xl font-semibold tracking-tight">
-            {greeting()}, <span className="text-gradient">Abhiram</span>
+            {greeting()}, <span className="text-gradient">{user?.user_metadata?.full_name ?? "there"}</span>
           </h1>
           <p className="mt-2 text-sm md:text-base text-muted-foreground">
             {hasSessions && metrics
@@ -337,7 +386,7 @@ const Dashboard = () => {
         </motion.div>
 
         <p className="text-[11px] text-muted-foreground/70 pt-2">
-          Profile: {profile?.feedback_style ?? "balanced"} feedback · {history.length} days analyzed · today: {today.score} score
+          Profile: {feedbackStyle} feedback · {history.length} days analyzed · today: {todayScore ?? "—"} score
         </p>
       </div>
     </AppLayout>
@@ -358,7 +407,7 @@ const Panel = ({
   <div
     className={cn(
       "h-full rounded-2xl border bg-card p-5 md:p-6 transition-all duration-300 hover:border-primary/30 hover:shadow-card",
-      accent ? "border-primary/30 bg-primary/[0.03]" : "border-border",
+      accent ? "border-primary/30 bg-primary/3" : "border-border",
     )}
   >
     <div className="flex items-baseline justify-between mb-4">

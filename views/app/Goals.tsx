@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { AppLayout } from "@/components/dashboard/AppLayout";
+import { useAuth } from "@/components/site/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,10 +15,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Target, Trash2 } from "lucide-react";
-import { addGoal, deleteGoal, getGoals, type Goal } from "@/lib/sessions";
+import { addGoalToDb, deleteGoalFromDb, fetchGoalsFromDb, type Goal } from "@/lib/sessions";
+import { toast } from "sonner";
+import { getErrorMessage } from "@/lib/error";
 
 const Goals = () => {
-  const [goals, setGoals] = useState<Goal[]>(getGoals());
+  const { user, loading } = useAuth();
+  const [goals, setGoals] = useState<Goal[]>([]);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("study");
   const [type, setType] = useState<"short_term" | "long_term">("long_term");
@@ -25,32 +29,67 @@ const Goals = () => {
   const [openEnded, setOpenEnded] = useState(true);
   const [targetValue, setTargetValue] = useState<string>("");
   const [targetUnit, setTargetUnit] = useState<string>("times/week");
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const create = () => {
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (loading || !user) return;
+      try {
+        const rows = await fetchGoalsFromDb();
+        if (active) setGoals(rows);
+      } catch (error) {
+        if (active) {
+          setGoals([]);
+          setLoadError(getErrorMessage(error));
+        }
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [loading, user]);
+
+  const create = async () => {
     if (!title.trim()) return;
-    addGoal({
-      title: title.trim(),
-      category,
-      type,
-      open_ended: openEnded,
-      target_value: targetValue ? Number(targetValue) : null,
-      target_unit: targetUnit || null,
-      keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
-    });
-    setGoals(getGoals());
-    setTitle("");
-    setKeywords("");
-    setTargetValue("");
+    try {
+      await addGoalToDb({
+        title: title.trim(),
+        category,
+        type,
+        open_ended: openEnded,
+        target_value: targetValue ? Number(targetValue) : null,
+        target_unit: targetUnit || null,
+        keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
+      });
+      setGoals(await fetchGoalsFromDb());
+      setTitle("");
+      setKeywords("");
+      setTargetValue("");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
   };
 
-  const remove = (id: string) => {
-    deleteGoal(id);
-    setGoals(getGoals());
+  const remove = async (id: string) => {
+    try {
+      await deleteGoalFromDb(id);
+      setGoals(await fetchGoalsFromDb());
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
   };
 
   return (
     <AppLayout title="Goals">
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-4xl mx-auto space-y-6">
+        {loadError && (
+          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
+            {loadError}
+          </div>
+        )}
+
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <h1 className="font-display text-2xl md:text-3xl font-semibold tracking-tight">Goals</h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -100,7 +139,7 @@ const Goals = () => {
               </div>
             </div>
             <div className="md:col-span-2 flex items-end">
-              <Button onClick={create} variant="hero" className="w-full h-10" disabled={!title.trim()}>
+              <Button onClick={() => void create()} variant="hero" className="w-full h-10" disabled={!title.trim()}>
                 <Plus className="h-4 w-4" /> Add
               </Button>
             </div>
@@ -147,7 +186,7 @@ const Goals = () => {
                 </div>
               </div>
               <button
-                onClick={() => remove(g.id)}
+                onClick={() => void remove(g.id)}
                 className="text-muted-foreground hover:text-destructive transition-colors"
                 aria-label="Delete goal"
               >

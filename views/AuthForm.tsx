@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/components/site/AuthProvider";
-import { loadProfile, loadProfileFromDatabase } from "@/lib/onboarding";
+import { loadProfileFromDatabase } from "@/lib/onboarding";
 import { motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 import Link from "next/link";
@@ -81,17 +81,13 @@ const AuthForm = ({ mode }: Props) => {
   };
 
   const nextPath = async (userId?: string) => {
-    if (userId) {
-      try {
-        const dbProfile = await loadProfileFromDatabase(userId);
-        if (dbProfile?.completed_at) return "/app";
-      } catch {
-        // Local cache fallback below.
-      }
+    if (!userId) return "/onboarding";
+    try {
+      const dbProfile = await loadProfileFromDatabase(userId);
+      return dbProfile?.completed_at ? "/app" : "/onboarding";
+    } catch {
+      return "/onboarding";
     }
-
-    const localProfile = loadProfile();
-    return localProfile?.completed_at ? "/app" : "/onboarding";
   };
 
   useEffect(() => {

@@ -1,15 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Check, ChevronLeft, ChevronRight, Sparkles, Target } from "lucide-react";
 import { AppLayout } from "@/components/dashboard/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { addMonthlyReview, getGoals, type Goal } from "@/lib/sessions";
+import { useAuth } from "@/components/site/AuthProvider";
+import { fetchGoalsFromDb, saveMonthlyReviewToDb, type Goal } from "@/lib/sessions";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { getErrorMessage } from "@/lib/error";
 
 const lifeOptions = ["Chaotic", "Inconsistent", "Improving", "Disciplined"];
 const energyOptions = ["Very low", "Inconsistent", "Stable", "High"];
@@ -26,11 +28,33 @@ const stepLabels = [
 ];
 
 const MonthlyReview = () => {
+  const { user, loading } = useAuth();
   const monthStart = new Date();
   monthStart.setDate(1);
   const monthKey = monthStart.toISOString().slice(0, 10);
 
-  const goals = useMemo(() => getGoals().filter((goal) => goal.is_active), []);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (loading || !user) return;
+      try {
+        const rows = await fetchGoalsFromDb();
+        if (active) setGoals(rows.filter((goal) => goal.is_active));
+      } catch (error) {
+        if (active) {
+          setGoals([]);
+          setLoadError(getErrorMessage(error));
+        }
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [loading, user]);
   const [step, setStep] = useState(1);
   const [submitted, setSubmitted] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -70,10 +94,14 @@ const MonthlyReview = () => {
     ].join(" ");
   }, [answers]);
 
-  const save = () => {
-    addMonthlyReview({ month_start: monthKey, answers });
-    toast.success("Monthly review saved");
-    setSubmitted(true);
+  const save = async () => {
+    try {
+      await saveMonthlyReviewToDb({ month_start: monthKey, answers });
+      toast.success("Monthly review saved");
+      setSubmitted(true);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    }
   };
 
   const canProceed = (currentStep: number) => {
@@ -142,6 +170,12 @@ const MonthlyReview = () => {
     <AppLayout title="Monthly review">
       <div className="min-h-[calc(100svh-4rem)] bg-black text-white">
         <div className="mx-auto flex min-h-[calc(100svh-4rem)] w-full max-w-6xl flex-col px-4 py-6 md:px-8 md:py-8">
+          {loadError && (
+            <div className="mb-4 rounded-2xl border border-white/15 bg-white/5 p-4 text-sm text-white/80">
+              {loadError}
+            </div>
+          )}
+
           <div className="mb-5 flex items-center justify-between text-[11px] uppercase tracking-[0.28em] text-white/45">
             <span>LyfOpt monthly reflection</span>
             <span>Step {submitted ? 6 : step} of 6</span>
@@ -202,6 +236,7 @@ const MonthlyReview = () => {
                             ))}
                           </QuestionGroup>
                           <QuestionGroup title="How was your energy overall?">
+                            <br/>
                             {energyOptions.map((option) => (
                               <ChoicePill
                                 key={option}
@@ -397,7 +432,7 @@ const MonthlyReview = () => {
                       ) : (
                         <Button
                           variant="hero"
-                          onClick={save}
+                          onClick={() => void save()}
                           disabled={!canProceed(step)}
                           className="bg-[#1DCD9F] text-black hover:bg-[#1DCD9F]/90"
                         >

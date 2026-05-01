@@ -1,5 +1,7 @@
-// Session-based time logging model (frontend / localStorage only)
-// Mirrors the schema: daily_logs, activity_sessions, goals, goal_activity_map, daily_analysis
+import { supabase } from "@/lib/supabase";
+
+// Session-based time logging model.
+// Mirrors the schema: daily_logs, activity_sessions, goals, monthly_reviews, user_preferences.
 
 export type SessionCategory = "productive" | "neutral" | "distraction";
 
@@ -104,7 +106,7 @@ export const getSessionsForLog = (log_id: string) =>
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
 
 export const addSession = (
-  s: Omit<ActivitySession, "id" | "created_at" | "duration_minutes"> & { category?: SessionCategory },
+  s: Omit<ActivitySession, "id" | "created_at" | "duration_minutes" | "category"> & { category?: SessionCategory },
 ): ActivitySession => {
   const duration = Math.max(
     0,
@@ -329,3 +331,330 @@ export const fmtMins = (m: number) => {
 
 // ---------- Today helper ----------
 export const todayDate = () => new Date().toISOString().slice(0, 10);
+
+const getAuthedProfileId = async () => {
+  const { data, error } = await supabase.auth.getUser();
+  if (error) throw error;
+  if (!data.user) throw new Error("No authenticated user found.");
+  return data.user.id;
+};
+
+const toIsoDate = (value: string) => new Date(value).toISOString();
+
+// ---------- Supabase-backed CRUD ----------
+export const fetchDailyLogsFromDb = async (): Promise<DailyLog[]> => {
+  const profileId = await getAuthedProfileId();
+  const { data, error } = await supabase
+    .from("daily_logs")
+    .select("id, date, wake_time, sleep_time, created_at, updated_at")
+    .eq("profile_id", profileId)
+    .order("date", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    date: row.date,
+    wake_time: row.wake_time ?? "07:30",
+    sleep_time: row.sleep_time ?? "23:30",
+    created_at: row.created_at,
+  }));
+};
+
+export const fetchDailyLogByDateFromDb = async (date: string): Promise<DailyLog | null> => {
+  const profileId = await getAuthedProfileId();
+  const { data, error } = await supabase
+    .from("daily_logs")
+    .select("id, date, wake_time, sleep_time, created_at, updated_at")
+    .eq("profile_id", profileId)
+    .eq("date", date)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    id: data.id,
+    date: data.date,
+    wake_time: data.wake_time ?? "07:30",
+    sleep_time: data.sleep_time ?? "23:30",
+    created_at: data.created_at,
+  };
+};
+
+export const upsertDailyLogToDb = async (log: Omit<DailyLog, "id" | "created_at"> & { id?: string }): Promise<DailyLog> => {
+  const profileId = await getAuthedProfileId();
+  const payload = {
+    profile_id: profileId,
+    date: log.date,
+    wake_time: log.wake_time,
+    sleep_time: log.sleep_time,
+  };
+  const { data, error } = await supabase
+    .from("daily_logs")
+    .upsert(payload, { onConflict: "profile_id,date" })
+    .select("id, date, wake_time, sleep_time, created_at")
+    .single();
+  if (error) throw error;
+  return {
+    id: data.id,
+    date: data.date,
+    wake_time: data.wake_time ?? "07:30",
+    sleep_time: data.sleep_time ?? "23:30",
+    created_at: data.created_at,
+  };
+};
+
+export const fetchSessionsFromDb = async (logId?: string): Promise<ActivitySession[]> => {
+  const profileId = await getAuthedProfileId();
+  let query = supabase
+    .from("activity_sessions")
+    .select("id, profile_id, log_id, title, start_time, end_time, duration_minutes, category, created_at")
+    .eq("profile_id", profileId)
+    .order("start_time", { ascending: true });
+  if (logId) query = query.eq("log_id", logId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    log_id: row.log_id,
+    title: row.title,
+    category: row.category as SessionCategory,
+    start_time: row.start_time,
+    end_time: row.end_time,
+    duration_minutes: row.duration_minutes,
+    created_at: row.created_at,
+  }));
+};
+
+export const addSessionToDb = async (
+  s: Omit<ActivitySession, "id" | "created_at" | "duration_minutes" | "category"> & { category?: SessionCategory },
+): Promise<ActivitySession> => {
+  const profileId = await getAuthedProfileId();
+  const duration = Math.max(
+    0,
+    Math.round((new Date(s.end_time).getTime() - new Date(s.start_time).getTime()) / 60000),
+  );
+
+  const t = s.title.toLowerCase();
+  const social = ["instagram", "tiktok", "twitter", "x", "youtube", "reddit", "facebook", "snap", "snapchat", "discord", "game", "gaming", "fortnite", "xbox", "playstation"];
+  let category: SessionCategory = s.category ?? "neutral";
+  if (!s.category) {
+    if (matchGoalForTitle(s.title)) category = "productive";
+    else if (social.some((k) => t.includes(k))) category = "distraction";
+    else category = "neutral";
+  }
+
+  const payload = {
+    profile_id: profileId,
+    log_id: s.log_id,
+    title: s.title,
+    category,
+    start_time: toIsoDate(s.start_time),
+    end_time: toIsoDate(s.end_time),
+    duration_minutes: duration,
+  };
+
+  const { data, error } = await supabase
+    .from("activity_sessions")
+    .insert(payload)
+    .select("id, profile_id, log_id, title, start_time, end_time, duration_minutes, category, created_at")
+    .single();
+  if (error) throw error;
+  return {
+    id: data.id,
+    log_id: data.log_id,
+    title: data.title,
+    category: data.category as SessionCategory,
+    start_time: data.start_time,
+    end_time: data.end_time,
+    duration_minutes: data.duration_minutes,
+    created_at: data.created_at,
+  };
+};
+
+export const deleteSessionFromDb = async (id: string) => {
+  const profileId = await getAuthedProfileId();
+  const { error } = await supabase.from("activity_sessions").delete().eq("id", id).eq("profile_id", profileId);
+  if (error) throw error;
+};
+
+export const fetchGoalsFromDb = async (): Promise<Goal[]> => {
+  const profileId = await getAuthedProfileId();
+  const { data, error } = await supabase
+    .from("goals")
+    .select("id, profile_id, title, type, category, open_ended, target_value, target_unit, is_active, keywords, created_at")
+    .eq("profile_id", profileId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    title: row.title,
+    type: row.type as Goal["type"],
+    category: row.category ?? "",
+    is_active: row.is_active,
+    created_at: row.created_at,
+    keywords: row.keywords ?? [],
+    open_ended: row.open_ended ?? true,
+    target_value: row.target_value ?? null,
+    target_unit: row.target_unit ?? null,
+  }));
+};
+
+export const addGoalToDb = async (g: Omit<Goal, "id" | "created_at" | "is_active"> & { is_active?: boolean }): Promise<Goal> => {
+  const profileId = await getAuthedProfileId();
+  const payload = {
+    profile_id: profileId,
+    title: g.title,
+    type: g.type,
+    category: g.category,
+    open_ended: g.open_ended ?? true,
+    target_value: g.target_value ?? null,
+    target_unit: g.target_unit ?? null,
+    is_active: g.is_active ?? true,
+    keywords: g.keywords ?? [],
+  };
+  const { data, error } = await supabase
+    .from("goals")
+    .insert(payload)
+    .select("id, profile_id, title, type, category, open_ended, target_value, target_unit, is_active, keywords, created_at")
+    .single();
+  if (error) throw error;
+  return {
+    id: data.id,
+    title: data.title,
+    type: data.type as Goal["type"],
+    category: data.category ?? "",
+    is_active: data.is_active,
+    created_at: data.created_at,
+    keywords: data.keywords ?? [],
+    open_ended: data.open_ended ?? true,
+    target_value: data.target_value ?? null,
+    target_unit: data.target_unit ?? null,
+  };
+};
+
+export const deleteGoalFromDb = async (id: string) => {
+  const profileId = await getAuthedProfileId();
+  const { error } = await supabase.from("goals").delete().eq("id", id).eq("profile_id", profileId);
+  if (error) throw error;
+};
+
+export interface MonthlyReviewRow {
+  id: string;
+  profile_id: string;
+  month_start: string;
+  answers: Record<string, string>;
+  created_at: string;
+}
+
+export const fetchMonthlyReviewsFromDb = async (): Promise<MonthlyReviewRow[]> => {
+  const profileId = await getAuthedProfileId();
+  const { data, error } = await supabase
+    .from("monthly_reviews")
+    .select("id, profile_id, month_start, answers, created_at")
+    .eq("profile_id", profileId)
+    .order("month_start", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as MonthlyReviewRow[];
+};
+
+export const saveMonthlyReviewToDb = async (review: Omit<MonthlyReviewRow, "id" | "profile_id" | "created_at">) => {
+  const profileId = await getAuthedProfileId();
+  const payload = {
+    profile_id: profileId,
+    month_start: review.month_start,
+    answers: review.answers,
+  };
+  const { data, error } = await supabase
+    .from("monthly_reviews")
+    .upsert(payload, { onConflict: "profile_id,month_start" })
+    .select("id, profile_id, month_start, answers, created_at")
+    .single();
+  if (error) throw error;
+  return data as MonthlyReviewRow;
+};
+
+export interface UserPreferencesRow {
+  profile_id: string;
+  gaming_is_distraction: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const fetchUserPreferencesFromDb = async (): Promise<UserPreferencesRow | null> => {
+  const profileId = await getAuthedProfileId();
+  const { data, error } = await supabase
+    .from("user_preferences")
+    .select("profile_id, gaming_is_distraction, created_at, updated_at")
+    .eq("profile_id", profileId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as UserPreferencesRow | null) ?? null;
+};
+
+export const saveUserPreferencesToDb = async (prefs: UserPreferences) => {
+  const profileId = await getAuthedProfileId();
+  const payload = {
+    profile_id: profileId,
+    gaming_is_distraction: prefs.gaming_is_distraction ?? true,
+  };
+  const { data, error } = await supabase
+    .from("user_preferences")
+    .upsert(payload, { onConflict: "profile_id" })
+    .select("profile_id, gaming_is_distraction, created_at, updated_at")
+    .single();
+  if (error) throw error;
+  return data as UserPreferencesRow;
+};
+
+export interface DbHistoryEntry extends DayEntry {
+  log_id: string;
+  productive_minutes: number;
+  distraction_minutes: number;
+  neutral_minutes: number;
+  untracked_minutes: number;
+}
+
+const summarizeDay = (score: number) => {
+  if (score > 70) return "Strong day. Sleep and focus aligned.";
+  if (score > 45) return "Mixed day. Distraction was the leak.";
+  return "Weak day. Recovery first, output second.";
+};
+
+export const buildHistoryFromDb = (logs: DailyLog[], sessions: ActivitySession[], goals: Goal[] = []) => {
+  return logs.map((log) => {
+    const daySessions = sessions.filter((session) => session.log_id === log.id);
+    const metrics = computeMetrics(log, daySessions, goals);
+    const sleep = (() => {
+      const [wh, wm] = log.wake_time.split(":").map(Number);
+      const [sh, sm] = log.sleep_time.split(":").map(Number);
+      let awake = sh * 60 + sm - (wh * 60 + wm);
+      if (awake <= 0) awake += 24 * 60;
+      return +(awake / 60).toFixed(1);
+    })();
+    return {
+      log_id: log.id,
+      date: log.date,
+      sleep,
+      focus: +(metrics.productive / 60).toFixed(1),
+      distraction: +(metrics.distraction / 60).toFixed(1),
+      energy: Math.max(1, Math.min(5, Math.round((metrics.goalScore + metrics.efficiencyScore) / 40) || 1)),
+      score: Math.max(0, Math.min(100, Math.round(metrics.efficiencyScore * 0.65 + metrics.goalScore * 0.35))),
+      summary: summarizeDay(Math.max(0, Math.min(100, Math.round(metrics.efficiencyScore * 0.65 + metrics.goalScore * 0.35)))),
+      productive_minutes: metrics.productive,
+      distraction_minutes: metrics.distraction,
+      neutral_minutes: metrics.neutral,
+      untracked_minutes: metrics.untracked,
+    } satisfies DbHistoryEntry;
+  });
+};
+
+export const weeklyFromHistory = (history: DbHistoryEntry[]) => {
+  const all = history.slice(-7);
+  const avg = (selector: (entry: DbHistoryEntry) => number) =>
+    all.length ? +(all.reduce((sum, entry) => sum + selector(entry), 0) / all.length).toFixed(1) : 0;
+  return {
+    days: all,
+    avgSleep: avg((entry) => entry.sleep),
+    avgFocus: avg((entry) => entry.focus),
+    avgDistraction: avg((entry) => entry.distraction),
+    avgScore: Math.round(avg((entry) => entry.score)),
+  };
+};

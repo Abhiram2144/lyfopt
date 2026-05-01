@@ -1,13 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/site/AuthProvider";
 import { motion } from "framer-motion";
 import { AppLayout } from "@/components/dashboard/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { loadProfile, saveProfile, type FeedbackStyle } from "@/lib/onboarding";
-import { getUserPreferences, saveUserPreferences } from "@/lib/sessions";
+import {
+  loadProfileFromDatabase,
+  saveProfileToDatabase,
+  type FeedbackStyle,
+  type OnboardingProfile,
+} from "@/lib/onboarding";
+import {
+  fetchUserPreferencesFromDb,
+  saveUserPreferencesToDb,
+  type UserPreferencesRow,
+} from "@/lib/sessions";
 import { Check, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -26,16 +36,60 @@ const styles: { id: FeedbackStyle; label: string; desc: string }[] = [
 
 const Settings = () => {
   const router = useRouter();
-  const profile = loadProfile();
+  const { user, loading } = useAuth();
   const [plan, setPlan] = useState("pro");
-  const [style, setStyle] = useState<FeedbackStyle>(profile?.feedback_style ?? "balanced");
-  const prefs = getUserPreferences();
-  const [gamingIsDistraction, setGamingIsDistraction] = useState<boolean>(prefs?.gaming_is_distraction ?? true);
+  const [profile, setProfile] = useState<OnboardingProfile | null>(null);
+  const [style, setStyle] = useState<FeedbackStyle>("balanced");
+  const [gamingIsDistraction, setGamingIsDistraction] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const save = () => {
-    if (profile) saveProfile({ ...profile, feedback_style: style });
-    saveUserPreferences({ gaming_is_distraction: gamingIsDistraction });
-    toast.success("Settings saved");
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (loading || !user) return;
+
+      try {
+        const [loadedProfile, loadedPrefs] = await Promise.all([
+          loadProfileFromDatabase(user.id),
+          fetchUserPreferencesFromDb(),
+        ]);
+        if (!active) return;
+        setProfile(loadedProfile);
+        setStyle(loadedProfile?.feedback_style ?? "balanced");
+        setGamingIsDistraction(loadedPrefs?.gaming_is_distraction ?? true);
+      } catch (error) {
+        if (!active) return;
+        const message =
+          error instanceof Error
+            ? error.message
+            : typeof error === "string"
+              ? error
+              : "Unable to load settings right now.";
+        setLoadError(message);
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [loading, user]);
+
+  const save = async () => {
+    try {
+      if (user && profile) {
+        await saveProfileToDatabase(user.id, { ...profile, feedback_style: style });
+      }
+      await saveUserPreferencesToDb({ gaming_is_distraction: gamingIsDistraction });
+      toast.success("Settings saved");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === "string"
+            ? error
+            : "Unable to save settings right now.";
+      toast.error(message);
+    }
   };
 
   const logout = () => {
@@ -46,6 +100,12 @@ const Settings = () => {
   return (
     <AppLayout title="Settings">
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-3xl mx-auto space-y-8">
+        {loadError && (
+          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
+            {loadError}
+          </div>
+        )}
+
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <h1 className="font-display text-2xl md:text-3xl font-semibold">Settings</h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -140,7 +200,7 @@ const Settings = () => {
         </Section>
 
         <div className="flex flex-wrap gap-3 pt-4 border-t border-border">
-          <Button variant="hero" onClick={save}>
+          <Button variant="hero" onClick={() => void save()}>
             Save changes
           </Button>
           <Button variant="ghost" onClick={logout} className="text-muted-foreground">

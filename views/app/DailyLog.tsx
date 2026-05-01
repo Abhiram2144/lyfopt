@@ -7,6 +7,7 @@ import { AppLayout } from "@/components/dashboard/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { useAuth } from "@/components/site/AuthProvider";
 // select removed: sessions are auto-categorized via heuristics
 import {
   Sparkles,
@@ -20,18 +21,23 @@ import {
   Clock,
 } from "lucide-react";
 import {
-  addSession,
+  addSessionToDb,
   computeMetrics,
-  deleteSession,
+  deleteSessionFromDb,
+  fetchDailyLogByDateFromDb,
+  fetchGoalsFromDb,
+  fetchSessionsFromDb,
   fmtMins,
-  getSessionsForLog,
   matchGoalForTitle,
   todayDate,
-  upsertLog,
+  upsertDailyLogToDb,
   type ActivitySession,
+  type Goal,
   type SessionCategory,
 } from "@/lib/sessions";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { getErrorMessage } from "@/lib/error";
 
 const categoryStyles: Record<SessionCategory, { dot: string; ring: string; label: string; icon: typeof Target }> = {
   productive: { dot: "bg-primary", ring: "border-primary/30", label: "Productive", icon: Target },
@@ -43,6 +49,7 @@ const toIso = (date: string, time: string) => new Date(`${date}T${time}:00`).toI
 
 const DailyLog = () => {
   const router = useRouter();
+  const { user, loading } = useAuth();
   const date = todayDate();
   const [wake, setWake] = useState("07:30");
   const [sleep, setSleep] = useState("23:30");
@@ -54,23 +61,48 @@ const DailyLog = () => {
   const [end, setEnd] = useState("11:00");
 
   const [sessions, setSessions] = useState<ActivitySession[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // initialize log row
   useEffect(() => {
-    const log = upsertLog({ date, wake_time: wake, sleep_time: sleep });
-    setLogId(log.id);
-    setSessions(getSessionsForLog(log.id));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    let active = true;
 
-  // keep wake/sleep persisted
+    const load = async () => {
+      if (loading || !user) return;
+
+      try {
+        const [loadedGoals, existingLog] = await Promise.all([fetchGoalsFromDb(), fetchDailyLogByDateFromDb(date)]);
+        const log = existingLog ?? (await upsertDailyLogToDb({ date, wake_time: wake, sleep_time: sleep }));
+        const loadedSessions = await fetchSessionsFromDb(log.id);
+
+        if (!active) return;
+        setGoals(loadedGoals);
+        setLogId(log.id);
+        setWake(log.wake_time);
+        setSleep(log.sleep_time);
+        setSessions(loadedSessions);
+      } catch (error) {
+        if (!active) return;
+        setLoadError(getErrorMessage(error));
+      }
+    };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
+  }, [date, loading, user]);
+
   useEffect(() => {
     if (!logId) return;
-    upsertLog({ id: logId, date, wake_time: wake, sleep_time: sleep });
+    void upsertDailyLogToDb({ id: logId, date, wake_time: wake, sleep_time: sleep }).catch((error) => {
+      toast.error(getErrorMessage(error));
+    });
   }, [wake, sleep, logId, date]);
 
-  const matched = useMemo(() => (title.trim() ? matchGoalForTitle(title) : null), [title]);
+  const matched = useMemo(() => (title.trim() ? matchGoalForTitle(title, goals) : null), [title, goals]);
 
   const addOne = () => {
     if (!title.trim() || !logId) return;
@@ -82,19 +114,30 @@ const DailyLog = () => {
       next.setDate(next.getDate() + 1);
       endIso = new Date(`${next.toISOString().slice(0, 10)}T${end}:00`).toISOString();
     }
-    addSession({
+    void addSessionToDb({
       log_id: logId,
       title: title.trim(),
       start_time: startIso,
       end_time: endIso,
-    });
-    setSessions(getSessionsForLog(logId));
-    setTitle("");
+    })
+      .then(async () => {
+        setSessions(await fetchSessionsFromDb(logId));
+        setTitle("");
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error));
+      });
   };
 
   const remove = (id: string) => {
-    deleteSession(id);
-    setSessions(getSessionsForLog(id ? logId : logId));
+    void deleteSessionFromDb(id)
+      .then(async () => {
+        if (!logId) return;
+        setSessions(await fetchSessionsFromDb(logId));
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error));
+      });
   };
 
   const metrics = useMemo(
@@ -111,6 +154,12 @@ const DailyLog = () => {
   return (
     <AppLayout title="Daily log">
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-5xl mx-auto space-y-6">
+        {loadError && (
+          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
+            {loadError}
+          </div>
+        )}
+
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
           <h1 className="font-display text-2xl md:text-3xl font-semibold tracking-tight">
             Map your day
@@ -189,7 +238,7 @@ const DailyLog = () => {
               {sessions.map((s) => {
                 const cat = categoryStyles[s.category];
                 const Icon = cat.icon;
-                const goal = matchGoalForTitle(s.title);
+                const goal = matchGoalForTitle(s.title, goals);
                 return (
                   <motion.div
                     key={s.id}

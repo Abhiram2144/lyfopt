@@ -1,17 +1,65 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { AppLayout } from "@/components/dashboard/AppLayout";
-import { weekly } from "@/lib/mockData";
+import { useAuth } from "@/components/site/AuthProvider";
+import {
+  buildHistoryFromDb,
+  fetchDailyLogsFromDb,
+  fetchGoalsFromDb,
+  fetchSessionsFromDb,
+  weeklyFromHistory,
+  type ActivitySession,
+  type DailyLog,
+  type Goal,
+} from "@/lib/sessions";
 import { AlertTriangle, CheckCircle2, Sparkles, FileBarChart } from "lucide-react";
+import { getErrorMessage } from "@/lib/error";
 
 const Reports = () => {
-  const w = useMemo(() => weekly(), []);
+  const { user, loading } = useAuth();
+  const [logs, setLogs] = useState<DailyLog[]>([]);
+  const [sessions, setSessions] = useState<ActivitySession[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (loading || !user) return;
+      try {
+        const [loadedLogs, loadedSessions, loadedGoals] = await Promise.all([
+          fetchDailyLogsFromDb(),
+          fetchSessionsFromDb(),
+          fetchGoalsFromDb(),
+        ]);
+        if (!active) return;
+        setLogs(loadedLogs);
+        setSessions(loadedSessions);
+        setGoals(loadedGoals);
+      } catch (error) {
+        if (!active) return;
+        setLoadError(getErrorMessage(error));
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [loading, user]);
+
+  const w = useMemo(() => weeklyFromHistory(buildHistoryFromDb(logs, sessions, goals)), [logs, sessions, goals]);
 
   return (
     <AppLayout title="Reports">
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-3xl mx-auto space-y-6">
+        {loadError && (
+          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
+            {loadError}
+          </div>
+        )}
+
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-muted-foreground">
             <FileBarChart className="h-3.5 w-3.5 text-primary" /> Weekly review
@@ -35,9 +83,11 @@ const Reports = () => {
               icon={<AlertTriangle className="h-4 w-4" />}
               title="Key problems"
               items={[
-                "Distraction averaged above your target every weekday afternoon.",
-                "Two nights below 6h sleep killed momentum mid-week.",
-                "Friday focus was the lowest of the week.",
+                `Distraction averaged ${w.avgDistraction}h this week.`,
+                `Average score is ${w.avgScore}/100 across the last 7 logged days.`,
+                w.avgFocus > 0
+                  ? `Focus averaged ${w.avgFocus}h, so your strongest lever is how you protect those blocks.`
+                  : "There was too little logged focus time to find a stable pattern yet.",
               ]}
             />
             <Section
@@ -45,9 +95,9 @@ const Reports = () => {
               icon={<CheckCircle2 className="h-4 w-4" />}
               title="Improvements"
               items={[
-                "Morning deep-work blocks held on 4 of 7 days.",
-                "Energy trended upward by 12% vs last week.",
-                "You moved your body on 5 days — a personal best.",
+                w.avgScore >= 60 ? "Your logged days are trending stronger than last week." : "Your strongest opportunity is making the day more consistent.",
+                w.avgSleep >= 7 ? "Sleep is supporting your output." : "Sleep is still under the threshold that makes the rest easier.",
+                "The next gain will come from reducing the biggest recurring leak, not adding more tasks.",
               ]}
             />
           </div>
@@ -57,8 +107,9 @@ const Reports = () => {
               <Sparkles className="h-3.5 w-3.5" /> AI recommendation
             </div>
             <p className="text-sm text-foreground/90 leading-relaxed">
-              Next week, lock bedtime at 11:15pm. Block 9–11am for one focus task. Phone in another
-              room from 1–4pm. Three rules. No more.
+              {w.avgScore >= 60
+                ? "Keep the current rhythm and protect your best hours with one deeper block each day."
+                : "Shrink the week to one priority, one focus block, and one boundary around distraction."}
             </p>
           </div>
         </div>
