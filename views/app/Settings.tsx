@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/site/AuthProvider";
 import { motion } from "framer-motion";
-import { AppLayout } from "@/components/dashboard/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -98,7 +97,7 @@ const Settings = () => {
   };
 
   return (
-    <AppLayout title="Settings">
+    <>
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-3xl mx-auto space-y-8">
         {loadError && (
           <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
@@ -208,7 +207,7 @@ const Settings = () => {
           </Button>
         </div>
       </div>
-    </AppLayout>
+    </>
   );
 };
 

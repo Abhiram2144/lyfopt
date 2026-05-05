@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { AppLayout } from "@/components/dashboard/AppLayout";
 import { useAuth } from "@/components/site/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Target, Trash2 } from "lucide-react";
-import { addGoalToDb, deleteGoalFromDb, fetchGoalsFromDb, type Goal } from "@/lib/sessions";
+import { addGoalToDb, deleteGoalFromDb, fetchGoalsFromDb, type Goal, type GoalPriority, type GoalTimeHorizon } from "@/lib/sessions";
 import { toast } from "sonner";
 import { getErrorMessage } from "@/lib/error";
 
@@ -25,6 +24,9 @@ const Goals = () => {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("study");
   const [type, setType] = useState<"short_term" | "long_term">("long_term");
+  const [priority, setPriority] = useState<GoalPriority>("medium");
+  const [timeHorizon, setTimeHorizon] = useState<GoalTimeHorizon>("weekly");
+  const [identityTag, setIdentityTag] = useState("I am someone who shows up");
   const [keywords, setKeywords] = useState("");
   const [openEnded, setOpenEnded] = useState(true);
   const [targetValue, setTargetValue] = useState<string>("");
@@ -58,6 +60,9 @@ const Goals = () => {
         title: title.trim(),
         category,
         type,
+        priority,
+        time_horizon: timeHorizon,
+        identity_tag: identityTag.trim(),
         open_ended: openEnded,
         target_value: targetValue ? Number(targetValue) : null,
         target_unit: targetUnit || null,
@@ -82,7 +87,7 @@ const Goals = () => {
   };
 
   return (
-    <AppLayout title="Goals">
+    <>
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-4xl mx-auto space-y-6">
         {loadError && (
           <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
@@ -98,6 +103,9 @@ const Goals = () => {
         </motion.div>
 
         <div className="rounded-2xl border border-border bg-card p-5 md:p-6 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Example: a high-priority weekly goal with a clear identity tag tends to drive better follow-through.
+          </p>
           <div className="grid md:grid-cols-12 gap-3">
             <div className="md:col-span-5 space-y-2">
               <Label className="text-xs">Goal title</Label>
@@ -130,13 +138,45 @@ const Goals = () => {
               </Select>
             </div>
             <div className="md:col-span-2 space-y-2">
-              <Label className="text-xs">Goal kind</Label>
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={openEnded} onChange={(e) => setOpenEnded(e.target.checked)} />
-                  <span className="text-sm ml-1">Open-ended</span>
-                </label>
-              </div>
+              <Label className="text-xs">Priority</Label>
+              <Select value={priority} onValueChange={(v) => setPriority(v as GoalPriority)}>
+                <SelectTrigger className="bg-background border-border h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="md:col-span-3 space-y-2">
+              <Label className="text-xs">Time horizon</Label>
+              <Select value={timeHorizon} onValueChange={(v) => setTimeHorizon(v as GoalTimeHorizon)}>
+                <SelectTrigger className="bg-background border-border h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="daily">Daily</SelectItem>
+                  <SelectItem value="weekly">Weekly</SelectItem>
+                  <SelectItem value="long-term">Long term</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="md:col-span-3 space-y-2">
+              <Label className="text-xs">Identity tag</Label>
+              <Input
+                value={identityTag}
+                onChange={(e) => setIdentityTag(e.target.value)}
+                placeholder="I am someone who..."
+                className="bg-background border-border h-10"
+              />
+            </div>
+            <div className="md:col-span-12 flex items-center gap-2">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={openEnded} onChange={(e) => setOpenEnded(e.target.checked)} />
+                <span className="text-sm">Open-ended goal</span>
+              </label>
             </div>
             <div className="md:col-span-2 flex items-end">
               <Button onClick={() => void create()} variant="hero" className="w-full h-10" disabled={!title.trim()}>
@@ -182,7 +222,7 @@ const Goals = () => {
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-foreground">{g.title}</div>
                 <div className="text-[11px] text-muted-foreground">
-                  {g.type.replace("_", " ")} · {g.category} · {g.open_ended ? "Open-ended" : `${g.target_value ?? "—"} ${g.target_unit ?? ""}`} · keywords: {g.keywords.join(", ") || "—"}
+                  {g.priority} priority · {g.time_horizon} · {g.identity_tag} · {g.open_ended ? "Open-ended" : `${g.target_value ?? "—"} ${g.target_unit ?? ""}`} · keywords: {g.keywords.join(", ") || "—"}
                 </div>
               </div>
               <button
@@ -196,7 +236,7 @@ const Goals = () => {
           ))}
         </div>
       </div>
-    </AppLayout>
+    </>
   );
 };
 

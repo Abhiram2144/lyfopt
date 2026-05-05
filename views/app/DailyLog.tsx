@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { AppLayout } from "@/components/dashboard/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -47,6 +46,20 @@ const categoryStyles: Record<SessionCategory, { dot: string; ring: string; label
 
 const toIso = (date: string, time: string) => new Date(`${date}T${time}:00`).toISOString();
 
+const pad = (value: number) => value.toString().padStart(2, "0");
+
+const nowTimeValue = () => {
+  const now = new Date();
+  return `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+};
+
+const addMinutesToTime = (time: string, minutes: number) => {
+  const [hours, mins] = time.split(":").map(Number);
+  const next = new Date();
+  next.setHours(hours, mins + minutes, 0, 0);
+  return `${pad(next.getHours())}:${pad(next.getMinutes())}`;
+};
+
 const DailyLog = () => {
   const router = useRouter();
   const { user, loading } = useAuth();
@@ -54,11 +67,17 @@ const DailyLog = () => {
   const [wake, setWake] = useState("07:30");
   const [sleep, setSleep] = useState("23:30");
   const [logId, setLogId] = useState<string>("");
+  const [energy, setEnergy] = useState<1 | 2 | 3 | 4 | 5>(3);
+  const [focus, setFocus] = useState<1 | 2 | 3 | 4 | 5>(3);
+  const [mood, setMood] = useState<"low" | "neutral" | "good">("neutral");
+  const [dayRating, setDayRating] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10>(7);
 
   // Session draft
   const [title, setTitle] = useState("");
-  const [start, setStart] = useState("09:00");
-  const [end, setEnd] = useState("11:00");
+  const [start, setStart] = useState(nowTimeValue());
+  const [end, setEnd] = useState(addMinutesToTime(nowTimeValue(), 60));
+  const [intentional, setIntentional] = useState(true);
+  const [difficulty, setDifficulty] = useState<1 | 2 | 3 | 4 | 5>(3);
 
   const [sessions, setSessions] = useState<ActivitySession[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -73,7 +92,15 @@ const DailyLog = () => {
 
       try {
         const [loadedGoals, existingLog] = await Promise.all([fetchGoalsFromDb(), fetchDailyLogByDateFromDb(date)]);
-        const log = existingLog ?? (await upsertDailyLogToDb({ date, wake_time: wake, sleep_time: sleep }));
+        const log = existingLog ?? (await upsertDailyLogToDb({
+          date,
+          wake_time: wake,
+          sleep_time: sleep,
+          energy_level: energy,
+          focus_level: focus,
+          mood,
+          day_rating: dayRating,
+        }));
         const loadedSessions = await fetchSessionsFromDb(log.id);
 
         if (!active) return;
@@ -81,6 +108,10 @@ const DailyLog = () => {
         setLogId(log.id);
         setWake(log.wake_time);
         setSleep(log.sleep_time);
+        setEnergy(log.energy_level);
+        setFocus(log.focus_level);
+        setMood(log.mood);
+        setDayRating(log.day_rating);
         setSessions(loadedSessions);
       } catch (error) {
         if (!active) return;
@@ -97,10 +128,19 @@ const DailyLog = () => {
 
   useEffect(() => {
     if (!logId) return;
-    void upsertDailyLogToDb({ id: logId, date, wake_time: wake, sleep_time: sleep }).catch((error) => {
+    void upsertDailyLogToDb({
+      id: logId,
+      date,
+      wake_time: wake,
+      sleep_time: sleep,
+      energy_level: energy,
+      focus_level: focus,
+      mood,
+      day_rating: dayRating,
+    }).catch((error) => {
       toast.error(getErrorMessage(error));
     });
-  }, [wake, sleep, logId, date]);
+  }, [wake, sleep, logId, date, energy, focus, mood, dayRating]);
 
   const matched = useMemo(() => (title.trim() ? matchGoalForTitle(title, goals) : null), [title, goals]);
 
@@ -117,6 +157,8 @@ const DailyLog = () => {
     void addSessionToDb({
       log_id: logId,
       title: title.trim(),
+      intentional,
+      difficulty,
       start_time: startIso,
       end_time: endIso,
     })
@@ -141,18 +183,54 @@ const DailyLog = () => {
   };
 
   const metrics = useMemo(
-    () => (logId ? computeMetrics({ id: logId, date, wake_time: wake, sleep_time: sleep, created_at: "" }, sessions) : null),
-    [sessions, wake, sleep, logId, date],
+    () =>
+      logId
+        ? computeMetrics(
+            {
+              id: logId,
+              date,
+              wake_time: wake,
+              sleep_time: sleep,
+              energy_level: energy,
+              focus_level: focus,
+              mood,
+              day_rating: dayRating,
+              created_at: "",
+            },
+            sessions,
+          )
+        : null,
+    [sessions, wake, sleep, energy, focus, mood, dayRating, logId, date],
   );
+
+  const quickAdd = (quickTitle: string, minutes: number, quickIntentional = true, quickDifficulty: 1 | 2 | 3 | 4 | 5 = 3) => {
+    if (!logId) return;
+    const startIso = toIso(date, start);
+    const endIso = toIso(date, addMinutesToTime(start, minutes));
+    void addSessionToDb({
+      log_id: logId,
+      title: quickTitle,
+      intentional: quickIntentional,
+      difficulty: quickDifficulty,
+      start_time: startIso,
+      end_time: endIso,
+    })
+      .then(async () => {
+        setSessions(await fetchSessionsFromDb(logId));
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error));
+      });
+  };
 
   const runAnalysis = () => {
     setSubmitting(true);
     sessionStorage.setItem("lyfopt:analyze:logId", logId);
-    setTimeout(() => router.push("/app/analysis"), 500);
+    setTimeout(() => router.push("/app/analysis?debugAi=1"), 500);
   };
 
   return (
-    <AppLayout title="Daily log">
+    <>
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-5xl mx-auto space-y-6">
         {loadError && (
           <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
@@ -175,11 +253,45 @@ const DailyLog = () => {
           <TimeField icon={Moon} label="Sleep time" value={sleep} onChange={setSleep} />
         </div>
 
+        <div className="rounded-2xl border border-border bg-card p-5 md:p-6 space-y-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-display text-base font-medium">Daily check-in</h2>
+              <p className="text-xs text-muted-foreground">Capture how today actually felt before you analyze it.</p>
+            </div>
+            <div className="text-xs text-muted-foreground">Prefilled from today</div>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <LevelGroup label="Energy" value={energy} onChange={setEnergy} />
+            <LevelGroup label="Focus" value={focus} onChange={setFocus} />
+            <MoodGroup value={mood} onChange={setMood} />
+            <RatingGroup value={dayRating} onChange={setDayRating} />
+          </div>
+        </div>
+
         {/* Add session */}
         <div className="rounded-2xl border border-border bg-card p-5 md:p-6">
           <div className="flex items-center gap-2 mb-4">
             <Plus className="h-4 w-4 text-primary" />
             <h2 className="font-display text-base font-medium">Add session</h2>
+          </div>
+
+          <div className="flex flex-wrap gap-2 mb-4">
+            {[
+              { label: "Focus block", title: "Deep work", minutes: 90 },
+              { label: "Workout", title: "Workout", minutes: 45 },
+              { label: "Recovery", title: "Break", minutes: 20, intentional: false as const },
+              { label: "Study", title: "Study", minutes: 60 },
+            ].map((quick) => (
+              <button
+                key={quick.label}
+                type="button"
+                onClick={() => quickAdd(quick.title, quick.minutes, quick.intentional ?? true)}
+                className="rounded-full border border-border bg-background px-3 py-1.5 text-xs text-foreground hover:border-primary/40 hover:text-primary transition-colors"
+              >
+                {quick.label}
+              </button>
+            ))}
           </div>
 
           <div className="grid md:grid-cols-12 gap-3">
@@ -205,7 +317,19 @@ const DailyLog = () => {
               <Label className="text-xs">End</Label>
               <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="bg-background border-border h-10" />
             </div>
-            {/* Type removed: sessions are auto-categorized */}
+            <div className="md:col-span-2 space-y-2">
+              <Label className="text-xs">Intentional</Label>
+              <div className="flex h-10 items-center rounded-md border border-border bg-background px-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={intentional} onChange={(e) => setIntentional(e.target.checked)} />
+                  Deliberate session
+                </label>
+              </div>
+            </div>
+            <div className="md:col-span-2 space-y-2">
+              <Label className="text-xs">Difficulty</Label>
+              <Input type="number" min={1} max={5} value={difficulty} onChange={(e) => setDifficulty(Number(e.target.value) as 1 | 2 | 3 | 4 | 5)} className="bg-background border-border h-10" />
+            </div>
             <div className="md:col-span-2 flex items-end">
               <Button onClick={addOne} variant="hero" className="w-full h-10" disabled={!title.trim()}>
                 <Plus className="h-4 w-4" /> Add
@@ -294,9 +418,96 @@ const DailyLog = () => {
           {submitting ? "Sending to AI..." : "Run analysis"}
         </Button>
       </div>
-    </AppLayout>
+    </>
   );
 };
+
+const LevelGroup = ({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: 1 | 2 | 3 | 4 | 5;
+  onChange: (value: 1 | 2 | 3 | 4 | 5) => void;
+}) => (
+  <div className="space-y-2">
+    <div className="text-xs uppercase tracking-wider text-muted-foreground">{label}</div>
+    <div className="grid grid-cols-5 gap-1.5">
+      {[1, 2, 3, 4, 5].map((level) => (
+        <button
+          key={level}
+          type="button"
+          onClick={() => onChange(level as 1 | 2 | 3 | 4 | 5)}
+          className={cn(
+            "h-10 rounded-lg border text-sm transition-colors",
+            value === level ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground",
+          )}
+        >
+          {level}
+        </button>
+      ))}
+    </div>
+  </div>
+);
+
+const MoodGroup = ({
+  value,
+  onChange,
+}: {
+  value: "low" | "neutral" | "good";
+  onChange: (value: "low" | "neutral" | "good") => void;
+}) => (
+  <div className="space-y-2">
+    <div className="text-xs uppercase tracking-wider text-muted-foreground">Mood</div>
+    <div className="grid grid-cols-3 gap-1.5">
+      {[
+        ["low", "Low"],
+        ["neutral", "Neutral"],
+        ["good", "Good"],
+      ].map(([moodValue, label]) => (
+        <button
+          key={moodValue}
+          type="button"
+          onClick={() => onChange(moodValue as "low" | "neutral" | "good")}
+          className={cn(
+            "h-10 rounded-lg border text-sm transition-colors",
+            value === moodValue ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground",
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  </div>
+);
+
+const RatingGroup = ({
+  value,
+  onChange,
+}: {
+  value: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+  onChange: (value: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10) => void;
+}) => (
+  <div className="space-y-2">
+    <div className="text-xs uppercase tracking-wider text-muted-foreground">Day rating</div>
+    <div className="grid grid-cols-5 gap-1.5">
+      {[1, 3, 5, 7, 10].map((rating) => (
+        <button
+          key={rating}
+          type="button"
+          onClick={() => onChange(rating as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10)}
+          className={cn(
+            "h-10 rounded-lg border text-sm transition-colors",
+            value === rating ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground",
+          )}
+        >
+          {rating}
+        </button>
+      ))}
+    </div>
+  </div>
+);
 
 const TimeField = ({
   icon: Icon,

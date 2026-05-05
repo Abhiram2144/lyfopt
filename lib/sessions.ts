@@ -4,12 +4,17 @@ import { supabase } from "@/lib/supabase";
 // Mirrors the schema: daily_logs, activity_sessions, goals, monthly_reviews, user_preferences.
 
 export type SessionCategory = "productive" | "neutral" | "distraction";
+export type MoodLevel = "low" | "neutral" | "good";
+export type GoalPriority = "low" | "medium" | "high";
+export type GoalTimeHorizon = "daily" | "weekly" | "long-term";
 
 export interface ActivitySession {
   id: string;
   log_id: string;
   title: string;
   category: SessionCategory;
+  intentional: boolean;
+  difficulty: 1 | 2 | 3 | 4 | 5;
   start_time: string; // ISO
   end_time: string;   // ISO
   duration_minutes: number;
@@ -21,6 +26,10 @@ export interface DailyLog {
   date: string;        // YYYY-MM-DD
   wake_time: string;   // HH:MM
   sleep_time: string;  // HH:MM (next day)
+  energy_level: 1 | 2 | 3 | 4 | 5;
+  focus_level: 1 | 2 | 3 | 4 | 5;
+  mood: MoodLevel;
+  day_rating: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
   created_at: string;
 }
 
@@ -29,6 +38,9 @@ export interface Goal {
   title: string;
   type: "short_term" | "long_term";
   category: string; // e.g. football, study, health
+  priority: GoalPriority;
+  time_horizon: GoalTimeHorizon;
+  identity_tag: string;
   is_active: boolean;
   created_at: string;
   keywords: string[]; // inline goal_activity_map
@@ -92,6 +104,10 @@ export const upsertLog = (log: Omit<DailyLog, "id" | "created_at"> & { id?: stri
     date: log.date,
     wake_time: log.wake_time,
     sleep_time: log.sleep_time,
+    energy_level: log.energy_level,
+    focus_level: log.focus_level,
+    mood: log.mood,
+    day_rating: log.day_rating,
     created_at: new Date().toISOString(),
   };
   write(KEYS.logs, [...logs, created]);
@@ -106,12 +122,13 @@ export const getSessionsForLog = (log_id: string) =>
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
 
 export const addSession = (
-  s: Omit<ActivitySession, "id" | "created_at" | "duration_minutes" | "category"> & { category?: SessionCategory },
+  s: Omit<ActivitySession, "id" | "created_at" | "duration_minutes" | "category" | "intentional" | "difficulty"> & {
+    category?: SessionCategory;
+    intentional?: boolean;
+    difficulty?: 1 | 2 | 3 | 4 | 5;
+  },
 ): ActivitySession => {
-  const duration = Math.max(
-    0,
-    Math.round((new Date(s.end_time).getTime() - new Date(s.start_time).getTime()) / 60000),
-  );
+  const normalized = normalizeSessionRange(s.start_time, s.end_time);
 
   // Simple heuristic to avoid asking users for a 'type':
   // - If title matches a goal -> productive
@@ -130,7 +147,11 @@ export const addSession = (
     ...s,
     id: uid(),
     category,
-    duration_minutes: duration,
+    intentional: s.intentional ?? true,
+    difficulty: s.difficulty ?? 3,
+    start_time: normalized.startIso,
+    end_time: normalized.endIso,
+    duration_minutes: normalized.duration,
     created_at: new Date().toISOString(),
   };
   write(KEYS.sessions, [...getSessions(), created]);
@@ -148,6 +169,9 @@ const seedGoals = (): Goal[] => [
     title: "Get better at football",
     type: "long_term",
     category: "football",
+    priority: "high",
+    time_horizon: "long-term",
+    identity_tag: "athlete",
     is_active: true,
     created_at: new Date().toISOString(),
     keywords: ["football", "soccer", "training"],
@@ -157,6 +181,9 @@ const seedGoals = (): Goal[] => [
     title: "Study consistently",
     type: "long_term",
     category: "study",
+    priority: "high",
+    time_horizon: "weekly",
+    identity_tag: "learner",
     is_active: true,
     created_at: new Date().toISOString(),
     keywords: ["library", "study", "reading", "course"],
@@ -178,6 +205,9 @@ export const addGoal = (g: Omit<Goal, "id" | "created_at" | "is_active"> & { is_
     ...g,
     id: uid(),
     is_active: g.is_active ?? true,
+    priority: g.priority ?? "medium",
+    time_horizon: g.time_horizon ?? "weekly",
+    identity_tag: g.identity_tag ?? "",
     created_at: new Date().toISOString(),
   };
   saveGoals([...getGoals(), created]);
@@ -341,12 +371,36 @@ const getAuthedProfileId = async () => {
 
 const toIsoDate = (value: string) => new Date(value).toISOString();
 
+const normalizeSessionRange = (startValue: string, endValue: string) => {
+  const start = new Date(startValue).getTime();
+  let end = new Date(endValue).getTime();
+
+  if (Number.isNaN(start) || Number.isNaN(end)) {
+    return {
+      startIso: toIsoDate(startValue),
+      endIso: toIsoDate(endValue),
+      duration: 0,
+    };
+  }
+
+  // If end is not after start, treat it as an overnight session.
+  if (end <= start) {
+    end += 24 * 60 * 60 * 1000;
+  }
+
+  return {
+    startIso: new Date(start).toISOString(),
+    endIso: new Date(end).toISOString(),
+    duration: Math.max(0, Math.round((end - start) / 60000)),
+  };
+};
+
 // ---------- Supabase-backed CRUD ----------
 export const fetchDailyLogsFromDb = async (): Promise<DailyLog[]> => {
   const profileId = await getAuthedProfileId();
   const { data, error } = await supabase
     .from("daily_logs")
-    .select("id, date, wake_time, sleep_time, created_at, updated_at")
+    .select("id, date, wake_time, sleep_time, energy_level, focus_level, mood, day_rating, created_at, updated_at")
     .eq("profile_id", profileId)
     .order("date", { ascending: true });
   if (error) throw error;
@@ -355,6 +409,10 @@ export const fetchDailyLogsFromDb = async (): Promise<DailyLog[]> => {
     date: row.date,
     wake_time: row.wake_time ?? "07:30",
     sleep_time: row.sleep_time ?? "23:30",
+    energy_level: row.energy_level ?? 3,
+    focus_level: row.focus_level ?? 3,
+    mood: (row.mood as MoodLevel | null) ?? "neutral",
+    day_rating: row.day_rating ?? 5,
     created_at: row.created_at,
   }));
 };
@@ -363,7 +421,7 @@ export const fetchDailyLogByDateFromDb = async (date: string): Promise<DailyLog 
   const profileId = await getAuthedProfileId();
   const { data, error } = await supabase
     .from("daily_logs")
-    .select("id, date, wake_time, sleep_time, created_at, updated_at")
+    .select("id, date, wake_time, sleep_time, energy_level, focus_level, mood, day_rating, created_at, updated_at")
     .eq("profile_id", profileId)
     .eq("date", date)
     .maybeSingle();
@@ -374,6 +432,10 @@ export const fetchDailyLogByDateFromDb = async (date: string): Promise<DailyLog 
     date: data.date,
     wake_time: data.wake_time ?? "07:30",
     sleep_time: data.sleep_time ?? "23:30",
+    energy_level: data.energy_level ?? 3,
+    focus_level: data.focus_level ?? 3,
+    mood: (data.mood as MoodLevel | null) ?? "neutral",
+    day_rating: data.day_rating ?? 5,
     created_at: data.created_at,
   };
 };
@@ -385,11 +447,15 @@ export const upsertDailyLogToDb = async (log: Omit<DailyLog, "id" | "created_at"
     date: log.date,
     wake_time: log.wake_time,
     sleep_time: log.sleep_time,
+    energy_level: log.energy_level,
+    focus_level: log.focus_level,
+    mood: log.mood,
+    day_rating: log.day_rating,
   };
   const { data, error } = await supabase
     .from("daily_logs")
     .upsert(payload, { onConflict: "profile_id,date" })
-    .select("id, date, wake_time, sleep_time, created_at")
+    .select("id, date, wake_time, sleep_time, energy_level, focus_level, mood, day_rating, created_at")
     .single();
   if (error) throw error;
   return {
@@ -397,6 +463,10 @@ export const upsertDailyLogToDb = async (log: Omit<DailyLog, "id" | "created_at"
     date: data.date,
     wake_time: data.wake_time ?? "07:30",
     sleep_time: data.sleep_time ?? "23:30",
+    energy_level: data.energy_level ?? 3,
+    focus_level: data.focus_level ?? 3,
+    mood: (data.mood as MoodLevel | null) ?? "neutral",
+    day_rating: data.day_rating ?? 5,
     created_at: data.created_at,
   };
 };
@@ -405,32 +475,38 @@ export const fetchSessionsFromDb = async (logId?: string): Promise<ActivitySessi
   const profileId = await getAuthedProfileId();
   let query = supabase
     .from("activity_sessions")
-    .select("id, profile_id, log_id, title, start_time, end_time, duration_minutes, category, created_at")
+    .select("id, profile_id, log_id, title, start_time, end_time, duration_minutes, category, intentional, difficulty, created_at")
     .eq("profile_id", profileId)
     .order("start_time", { ascending: true });
   if (logId) query = query.eq("log_id", logId);
   const { data, error } = await query;
   if (error) throw error;
-  return (data ?? []).map((row) => ({
-    id: row.id,
-    log_id: row.log_id,
-    title: row.title,
-    category: row.category as SessionCategory,
-    start_time: row.start_time,
-    end_time: row.end_time,
-    duration_minutes: row.duration_minutes,
-    created_at: row.created_at,
-  }));
+  return (data ?? []).map((row) => {
+    const normalized = normalizeSessionRange(row.start_time, row.end_time);
+    return {
+      id: row.id,
+      log_id: row.log_id,
+      title: row.title,
+      category: row.category as SessionCategory,
+      intentional: row.intentional ?? true,
+      difficulty: row.difficulty ?? 3,
+      start_time: row.start_time,
+      end_time: row.end_time,
+      duration_minutes: row.duration_minutes && row.duration_minutes > 0 ? row.duration_minutes : normalized.duration,
+      created_at: row.created_at,
+    };
+  });
 };
 
 export const addSessionToDb = async (
-  s: Omit<ActivitySession, "id" | "created_at" | "duration_minutes" | "category"> & { category?: SessionCategory },
+  s: Omit<ActivitySession, "id" | "created_at" | "duration_minutes" | "category" | "intentional" | "difficulty"> & {
+    category?: SessionCategory;
+    intentional?: boolean;
+    difficulty?: 1 | 2 | 3 | 4 | 5;
+  },
 ): Promise<ActivitySession> => {
   const profileId = await getAuthedProfileId();
-  const duration = Math.max(
-    0,
-    Math.round((new Date(s.end_time).getTime() - new Date(s.start_time).getTime()) / 60000),
-  );
+  const normalized = normalizeSessionRange(s.start_time, s.end_time);
 
   const t = s.title.toLowerCase();
   const social = ["instagram", "tiktok", "twitter", "x", "youtube", "reddit", "facebook", "snap", "snapchat", "discord", "game", "gaming", "fortnite", "xbox", "playstation"];
@@ -446,15 +522,17 @@ export const addSessionToDb = async (
     log_id: s.log_id,
     title: s.title,
     category,
-    start_time: toIsoDate(s.start_time),
-    end_time: toIsoDate(s.end_time),
-    duration_minutes: duration,
+    intentional: s.intentional ?? true,
+    difficulty: s.difficulty ?? 3,
+    start_time: normalized.startIso,
+    end_time: normalized.endIso,
+    duration_minutes: normalized.duration,
   };
 
   const { data, error } = await supabase
     .from("activity_sessions")
     .insert(payload)
-    .select("id, profile_id, log_id, title, start_time, end_time, duration_minutes, category, created_at")
+    .select("id, profile_id, log_id, title, start_time, end_time, duration_minutes, category, intentional, difficulty, created_at")
     .single();
   if (error) throw error;
   return {
@@ -462,6 +540,8 @@ export const addSessionToDb = async (
     log_id: data.log_id,
     title: data.title,
     category: data.category as SessionCategory,
+    intentional: data.intentional ?? true,
+    difficulty: data.difficulty ?? 3,
     start_time: data.start_time,
     end_time: data.end_time,
     duration_minutes: data.duration_minutes,
@@ -479,7 +559,7 @@ export const fetchGoalsFromDb = async (): Promise<Goal[]> => {
   const profileId = await getAuthedProfileId();
   const { data, error } = await supabase
     .from("goals")
-    .select("id, profile_id, title, type, category, open_ended, target_value, target_unit, is_active, keywords, created_at")
+    .select("id, profile_id, title, type, category, priority, time_horizon, identity_tag, open_ended, target_value, target_unit, is_active, keywords, created_at")
     .eq("profile_id", profileId)
     .order("created_at", { ascending: true });
   if (error) throw error;
@@ -488,6 +568,9 @@ export const fetchGoalsFromDb = async (): Promise<Goal[]> => {
     title: row.title,
     type: row.type as Goal["type"],
     category: row.category ?? "",
+    priority: (row.priority as GoalPriority | null) ?? "medium",
+    time_horizon: (row.time_horizon as GoalTimeHorizon | null) ?? "weekly",
+    identity_tag: row.identity_tag ?? "",
     is_active: row.is_active,
     created_at: row.created_at,
     keywords: row.keywords ?? [],
@@ -504,6 +587,9 @@ export const addGoalToDb = async (g: Omit<Goal, "id" | "created_at" | "is_active
     title: g.title,
     type: g.type,
     category: g.category,
+    priority: g.priority ?? "medium",
+    time_horizon: g.time_horizon ?? "weekly",
+    identity_tag: g.identity_tag ?? "",
     open_ended: g.open_ended ?? true,
     target_value: g.target_value ?? null,
     target_unit: g.target_unit ?? null,
@@ -513,7 +599,7 @@ export const addGoalToDb = async (g: Omit<Goal, "id" | "created_at" | "is_active
   const { data, error } = await supabase
     .from("goals")
     .insert(payload)
-    .select("id, profile_id, title, type, category, open_ended, target_value, target_unit, is_active, keywords, created_at")
+    .select("id, profile_id, title, type, category, priority, time_horizon, identity_tag, open_ended, target_value, target_unit, is_active, keywords, created_at")
     .single();
   if (error) throw error;
   return {
@@ -521,6 +607,9 @@ export const addGoalToDb = async (g: Omit<Goal, "id" | "created_at" | "is_active
     title: data.title,
     type: data.type as Goal["type"],
     category: data.category ?? "",
+    priority: (data.priority as GoalPriority | null) ?? "medium",
+    time_horizon: (data.time_horizon as GoalTimeHorizon | null) ?? "weekly",
+    identity_tag: data.identity_tag ?? "",
     is_active: data.is_active,
     created_at: data.created_at,
     keywords: data.keywords ?? [],
@@ -557,6 +646,16 @@ export const fetchMonthlyReviewsFromDb = async (): Promise<MonthlyReviewRow[]> =
 
 export const saveMonthlyReviewToDb = async (review: Omit<MonthlyReviewRow, "id" | "profile_id" | "created_at">) => {
   const profileId = await getAuthedProfileId();
+  const existing = await supabase
+    .from("monthly_reviews")
+    .select("id")
+    .eq("profile_id", profileId)
+    .eq("month_start", review.month_start)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data) {
+    throw new Error("You've already completed this month's review.");
+  }
   const payload = {
     profile_id: profileId,
     month_start: review.month_start,
@@ -569,6 +668,18 @@ export const saveMonthlyReviewToDb = async (review: Omit<MonthlyReviewRow, "id" 
     .single();
   if (error) throw error;
   return data as MonthlyReviewRow;
+};
+
+export const fetchMonthlyReviewForMonthFromDb = async (monthStart: string): Promise<MonthlyReviewRow | null> => {
+  const profileId = await getAuthedProfileId();
+  const { data, error } = await supabase
+    .from("monthly_reviews")
+    .select("id, profile_id, month_start, answers, created_at")
+    .eq("profile_id", profileId)
+    .eq("month_start", monthStart)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as MonthlyReviewRow | null) ?? null;
 };
 
 export interface UserPreferencesRow {

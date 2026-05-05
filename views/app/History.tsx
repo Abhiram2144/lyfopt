@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { AppLayout } from "@/components/dashboard/AppLayout";
 import { useAuth } from "@/components/site/AuthProvider";
 import {
   buildHistoryFromDb,
@@ -54,7 +53,7 @@ const History = () => {
   const history = useMemo(() => buildHistoryFromDb(logs, sessions, goals).slice().reverse(), [logs, sessions, goals]);
 
   return (
-    <AppLayout title="History">
+    <>
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-3xl mx-auto">
         {loadError && (
           <div className="mb-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
@@ -105,7 +104,7 @@ const History = () => {
           })}
         </div>
       </div>
-    </AppLayout>
+    </>
   );
 };
 

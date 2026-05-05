@@ -24,7 +24,6 @@ import {
   Plus,
 } from "lucide-react";
 import Link from "next/link";
-import { AppLayout } from "@/components/dashboard/AppLayout";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/site/AuthProvider";
@@ -129,7 +128,7 @@ const Dashboard = () => {
   // })();
 
   return (
-    <AppLayout title="Dashboard">
+    <>
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-350 mx-auto space-y-6">
         {loadError && (
           <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
@@ -389,7 +388,7 @@ const Dashboard = () => {
           Profile: {feedbackStyle} feedback · {history.length} days analyzed · today: {todayScore ?? "—"} score
         </p>
       </div>
-    </AppLayout>
+    </>
   );
 };
 

@@ -84,6 +84,14 @@ export const loadProfileFromDatabase = async (userId: string): Promise<Onboardin
 };
 
 export const saveProfileToDatabase = async (userId: string, profile: OnboardingProfile) => {
+  const { error: profileError } = await supabase
+    .from("profiles")
+    .upsert({ id: userId }, { onConflict: "id" });
+
+  if (profileError) {
+    throw new Error(profileError.message);
+  }
+
   const onboardingRow = {
     profile_id: userId,
     baseline_type: profile.baseline_type,
@@ -96,7 +104,7 @@ export const saveProfileToDatabase = async (userId: string, profile: OnboardingP
   const { error } = await supabase.from("profile_onboarding").upsert(onboardingRow, { onConflict: "profile_id" });
 
   if (error) {
-    throw error;
+    throw new Error(error.message);
   }
 
   saveProfile(profile);

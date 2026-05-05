@@ -4,92 +4,71 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { AppLayout } from "@/components/dashboard/AppLayout";
-import { Button } from "@/components/ui/button";
-import {
-  Sparkles,
-  Brain,
-  AlertTriangle,
-  CheckCircle2,
-  ThumbsUp,
-  ArrowLeft,
-  Target,
-  Zap,
-} from "lucide-react";
-import { loadProfileFromDatabase, type OnboardingProfile } from "@/lib/onboarding";
+import { Sparkles, Brain, AlertTriangle, CheckCircle2, ThumbsUp, ArrowLeft, Target, Zap } from "lucide-react";
+import { loadProfileFromDatabase, baselineLabel, failureLabel, type OnboardingProfile } from "@/lib/onboarding";
 import { getErrorMessage } from "@/lib/error";
-import {
-  computeMetrics,
-  fetchDailyLogsFromDb,
-  fetchGoalsFromDb,
-  fetchSessionsFromDb,
-  fmtMins,
-  type ComputedMetrics,
-  type DailyLog,
-  type Goal,
-} from "@/lib/sessions";
+import { fetchDailyLogsFromDb, fetchGoalsFromDb, fetchSessionsFromDb, type DailyLog, type Goal } from "@/lib/sessions";
 import { useAuth } from "@/components/site/AuthProvider";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import type { AnalyzeDayPayload, AnalyzeDayResult, AnalyzeDayMeta } from "@/lib/ai";
 
-const buildReport = (
-  log: DailyLog,
-  m: ComputedMetrics,
-  tone: string,
-) => {
-  const problems: string[] = [];
-  const positives: string[] = [];
-  const suggestions: string[] = [];
+interface AnalyzeDayApiResponse extends AnalyzeDayResult {
+  _meta?: AnalyzeDayMeta;
+  _debug?: {
+    payload?: AnalyzeDayPayload;
+  };
+  error?: string;
+}
 
-  if (m.distraction >= 120) {
-    problems.push(`${fmtMins(m.distraction)} lost to distraction — that's your biggest leak.`);
-    suggestions.push("Block the source: phone in another room during your peak hours.");
-  } else if (m.distraction > 0) {
-    positives.push("Distraction stayed under control today.");
+const fadeUp = {
+  initial: { opacity: 0, y: 12 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.45, ease: [0.16, 1, 0.3, 1] as const },
+};
+
+const toneMap = {
+  strict: "strict",
+  balanced: "balanced",
+  supportive: "motivational",
+} as const;
+
+const buildProfileForAnalysis = (profile: OnboardingProfile | null): AnalyzeDayPayload["userProfile"] | undefined => {
+  if (!profile) return undefined;
+  const strengths = [] as string[];
+  if (profile.baseline_type) {
+    strengths.push(baselineLabel[profile.baseline_type]);
+    strengths.push(
+      profile.baseline_type === "disciplined_optimize"
+        ? "already values structure"
+        : profile.baseline_type === "capable_inconsistent"
+          ? "has real capacity when focused"
+          : profile.baseline_type === "all_over_the_place"
+            ? "can benefit strongly from better boundaries"
+            : "can scale once the right rhythm is set",
+    );
   }
 
-  if (m.untracked > m.awakeMinutes * 0.3) {
-    problems.push(`${fmtMins(m.untracked)} unaccounted for — that's where your day disappears.`);
-    suggestions.push("Log gaps too. The invisible hours are usually the costly ones.");
-  }
-
-  if (m.efficiencyScore < 30) {
-    problems.push(`Only ${m.efficiencyScore}% of your day was productive.`);
-    suggestions.push("Schedule one protected 90-minute deep-work block tomorrow.");
-  } else if (m.efficiencyScore >= 50) {
-    positives.push(`Strong: ${m.efficiencyScore}% of your day went to productive work.`);
-  }
-
-  if (m.goalScore >= 25) {
-    positives.push(`${m.goalScore}% of your day moved your goals forward.`);
-  } else if (m.goalBreakdown.length === 0) {
-    problems.push("Zero time on goal-aligned activities today.");
-    suggestions.push("Pick one goal. Block 60 minutes for it tomorrow before noon.");
-  }
-
-  const top = m.topActivity;
-  const summary =
-    tone === "strict"
-      ? `${m.efficiencyScore}% effective. ${m.distraction >= 120 ? "Distraction killed your peak." : "Untracked time is hiding the truth."} Stop pretending the day was full.`
-      : tone === "supportive"
-        ? `You had ${fmtMins(m.productive)} of real productive time${top ? `, mostly on ${top.title}` : ""}. A few clear levers exist for tomorrow.`
-        : `Moderate day. ${fmtMins(m.productive)} productive, ${fmtMins(m.distraction)} distracted. ${m.goalScore < 20 ? "Goal alignment is the next lever." : "Goal alignment is holding."}`;
-
-  const core_problem =
-    problems[0] ?? "No critical issues today — but consistency is the real test.";
-  const key_action =
-    suggestions[0] ?? "Repeat tomorrow. Patterns become visible after 14 days.";
-
-  return { summary, problems, positives, suggestions, core_problem, key_action };
+  return {
+    tone: profile.feedback_style ? toneMap[profile.feedback_style] : "balanced",
+    weaknesses: profile.failure_patterns.map((pattern) => failureLabel[pattern]),
+    strengths,
+  };
 };
 
 const AnalysisResult = () => {
   const router = useRouter();
   const { user, loading } = useAuth();
-  const [stage, setStage] = useState<"analyzing" | "report">("analyzing");
+  const [report, setReport] = useState<AnalyzeDayResult | null>(null);
+  const [reportMeta, setReportMeta] = useState<AnalyzeDayMeta | null>(null);
+  const [requestPayload, setRequestPayload] = useState<AnalyzeDayPayload | null>(null);
+  const [responsePayload, setResponsePayload] = useState<AnalyzeDayApiResponse | null>(null);
   const [log, setLog] = useState<DailyLog | null>(null);
-  const [metrics, setMetrics] = useState<ComputedMetrics | null>(null);
   const [profile, setProfile] = useState<OnboardingProfile | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -97,31 +76,66 @@ const AnalysisResult = () => {
     const load = async () => {
       if (loading || !user) return;
 
-      const id = sessionStorage.getItem("lyfopt:analyze:logId");
+      setIsLoading(true);
+      setLoadError(null);
+      const urlDebug = new URLSearchParams(window.location.search).get("debugAi") === "1";
+      setDebugEnabled(urlDebug);
+
       try {
-        const [logs, sessions, goals] = await Promise.all([
+        const [logs, sessions, goals, savedProfile] = await Promise.all([
           fetchDailyLogsFromDb(),
           fetchSessionsFromDb(),
           fetchGoalsFromDb(),
+          loadProfileFromDatabase(user.id),
         ]);
-        const found = id ? logs.find((entry) => entry.id === id) : logs[logs.length - 1] ?? null;
-        if (!found) {
-          if (active) router.replace("/app/log");
+
+        const logId = sessionStorage.getItem("lyfopt:analyze:logId");
+        const selectedLog = logId ? logs.find((entry) => entry.id === logId) : logs[logs.length - 1] ?? null;
+
+        if (!selectedLog) {
+          router.replace("/app/log");
           return;
         }
-        const foundSessions = sessions.filter((session) => session.log_id === found.id);
-        const reportMetrics = computeMetrics(found, foundSessions, goals);
-        const savedProfile = await loadProfileFromDatabase(user.id);
+
+        const selectedSessions = sessions.filter((session) => session.log_id === selectedLog.id);
+        const payload: AnalyzeDayPayload = {
+          sessions: selectedSessions,
+          goals,
+          dailyLog: {
+            wake_time: selectedLog.wake_time,
+            sleep_time: selectedLog.sleep_time,
+            energy_level: selectedLog.energy_level,
+            focus_level: selectedLog.focus_level,
+            mood: selectedLog.mood,
+            day_rating: selectedLog.day_rating,
+          },
+          userProfile: buildProfileForAnalysis(savedProfile),
+        };
+
+        setRequestPayload(payload);
+
+        const response = await fetch(`/api/analyze-day${urlDebug ? "?debug=1" : ""}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const body = (await response.json()) as AnalyzeDayApiResponse;
+        setResponsePayload(body);
+        if (!response.ok) {
+          throw new Error(body.error ?? "Unable to analyze the day.");
+        }
 
         if (!active) return;
-        setLog(found);
-        setMetrics(reportMetrics);
+        setLog(selectedLog);
         setProfile(savedProfile);
-        const timer = setTimeout(() => setStage("report"), 2000);
-        return () => clearTimeout(timer);
+        setReportMeta(body._meta ?? null);
+        setReport(body);
       } catch (error) {
         if (!active) return;
         setLoadError(getErrorMessage(error));
+      } finally {
+        if (active) setIsLoading(false);
       }
     };
 
@@ -132,10 +146,8 @@ const AnalysisResult = () => {
     };
   }, [loading, router, user]);
 
-  const report = log && metrics ? buildReport(log, metrics, profile?.feedback_style ?? "balanced") : null;
-
   return (
-    <AppLayout title="Analysis">
+    <>
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-3xl mx-auto">
         {loadError && (
           <div className="mb-6 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
@@ -151,12 +163,10 @@ const AnalysisResult = () => {
         </Link>
 
         <AnimatePresence mode="wait">
-          {stage === "analyzing" && (
+          {isLoading && !report && (
             <motion.div
-              key="a"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              key="loading"
+              {...fadeUp}
               className="rounded-2xl border border-border bg-card p-12 flex flex-col items-center gap-6"
             >
               <div className="relative">
@@ -165,18 +175,9 @@ const AnalysisResult = () => {
                   <Brain className="h-7 w-7 text-primary" />
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-sm">
-                <span>Analyzing your day</span>
-                <span className="flex gap-1">
-                  {[0, 1, 2].map((d) => (
-                    <motion.span
-                      key={d}
-                      className="h-1.5 w-1.5 rounded-full bg-primary"
-                      animate={{ opacity: [0.3, 1, 0.3] }}
-                      transition={{ duration: 1.2, repeat: Infinity, delay: d * 0.2 }}
-                    />
-                  ))}
-                </span>
+              <div className="text-center space-y-2">
+                <div className="text-sm font-medium">Analyzing your day…</div>
+                <div className="text-xs text-muted-foreground">Gemini is reading your log, sessions, goals, and context.</div>
               </div>
               <div className="w-full max-w-sm space-y-2">
                 {[0, 1, 2].map((i) => (
@@ -192,17 +193,16 @@ const AnalysisResult = () => {
             </motion.div>
           )}
 
-          {stage === "report" && report && metrics && (
-            <motion.div key="r" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
-              {/* Score row */}
+          {report && log && (
+            <motion.div key="report" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="grid grid-cols-3 gap-3"
               >
-                <ScorePill icon={Zap} label="Efficiency" value={`${metrics.efficiencyScore}%`} />
-                <ScorePill icon={Target} label="Goal score" value={`${metrics.goalScore}%`} />
-                <ScorePill icon={AlertTriangle} label="Wasted" value={fmtMins(metrics.distraction)} dim />
+                <ScorePill icon={Zap} label="Source" value={reportMeta?.source === "gemini" ? "Gemini" : "Fallback"} />
+                <ScorePill icon={Target} label="Log date" value={log.date} />
+                <ScorePill icon={AlertTriangle} label="Mood" value={log.mood} dim />
               </motion.div>
 
               <Block delay={0.1} icon={<Sparkles className="h-4 w-4 text-primary" />} title="Summary">
@@ -217,19 +217,23 @@ const AnalysisResult = () => {
                 <p className="text-sm text-foreground/90 leading-relaxed">{report.key_action}</p>
               </Block>
 
-              <List
-                title="Problems"
-                icon={<AlertTriangle className="h-4 w-4 text-destructive" />}
-                items={report.problems}
-                bulletClass="text-destructive"
-                startDelay={0.55}
-              />
+              <Block delay={0.5} icon={<ThumbsUp className="h-4 w-4 text-primary" />} title="Pattern detected">
+                <p className="text-sm text-foreground/90 leading-relaxed">{report.pattern_detected}</p>
+              </Block>
+
               <List
                 title="Positives"
                 icon={<ThumbsUp className="h-4 w-4 text-primary" />}
                 items={report.positives}
                 bulletClass="text-primary"
-                startDelay={0.55 + report.problems.length * 0.18}
+                startDelay={0.55}
+              />
+              <List
+                title="Problems"
+                icon={<AlertTriangle className="h-4 w-4 text-destructive" />}
+                items={report.problems}
+                bulletClass="text-destructive"
+                startDelay={0.55 + report.positives.length * 0.18}
               />
               <List
                 title="Suggestions"
@@ -239,7 +243,7 @@ const AnalysisResult = () => {
                 startDelay={0.55 + (report.problems.length + report.positives.length) * 0.18}
               />
 
-              <div className="flex gap-3 pt-2">
+              <div className="flex flex-wrap gap-3 pt-2">
                 <Button asChild variant="hero">
                   <Link href="/app">Back to dashboard</Link>
                 </Button>
@@ -247,11 +251,37 @@ const AnalysisResult = () => {
                   <Link href="/app/log">Log another</Link>
                 </Button>
               </div>
+
+              {debugEnabled && (
+                <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground">AI Debug</div>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setDebugOpen((value) => !value)}>
+                      {debugOpen ? "Hide" : "Show"}
+                    </Button>
+                  </div>
+                  {debugOpen && (
+                    <>
+                      <div className="text-xs text-muted-foreground">
+                        Source: <span className="text-foreground">{reportMeta?.source ?? "unknown"}</span>
+                      </div>
+                      <details>
+                        <summary className="cursor-pointer text-sm text-foreground">Request payload sent to API</summary>
+                        <pre className="mt-2 max-h-60 overflow-auto rounded bg-background p-3 text-xs">{JSON.stringify(requestPayload, null, 2)}</pre>
+                      </details>
+                      <details>
+                        <summary className="cursor-pointer text-sm text-foreground">Raw API response</summary>
+                        <pre className="mt-2 max-h-60 overflow-auto rounded bg-background p-3 text-xs">{JSON.stringify(responsePayload, null, 2)}</pre>
+                      </details>
+                    </>
+                  )}
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
       </div>
-    </AppLayout>
+    </>
   );
 };
 
@@ -266,13 +296,11 @@ const ScorePill = ({
   value: string;
   dim?: boolean;
 }) => (
-  <div className={cn("rounded-xl border bg-card p-4", dim ? "border-destructive/30" : "border-primary/30")}>
+  <div className={cn("rounded-xl border bg-card p-4", dim ? "border-destructive/30" : "border-primary/30")}> 
     <div className="flex items-center justify-between">
       <Icon className={cn("h-4 w-4", dim ? "text-destructive" : "text-primary")} />
     </div>
-    <div className={cn("mt-2 font-display text-xl font-semibold", dim ? "text-destructive" : "text-primary")}>
-      {value}
-    </div>
+    <div className={cn("mt-2 font-display text-xl font-semibold", dim ? "text-destructive" : "text-primary")}>{value}</div>
     <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
   </div>
 );
@@ -322,16 +350,16 @@ const List = ({
         <span className="text-[11px] uppercase tracking-widest text-muted-foreground">{title}</span>
       </div>
       <ul className="space-y-2">
-        {items.map((t, i) => (
+        {items.map((item, index) => (
           <motion.li
-            key={i}
+            key={index}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: startDelay + i * 0.18, duration: 0.35 }}
+            transition={{ delay: startDelay + index * 0.18, duration: 0.35 }}
             className="flex items-start gap-2.5 rounded-xl border border-border bg-card px-4 py-3 text-sm"
           >
             <span className={cn("mt-0.5 text-base leading-none", bulletClass)}>•</span>
-            <span className="text-foreground/90 leading-relaxed">{t}</span>
+            <span className="text-foreground/90 leading-relaxed">{item}</span>
           </motion.li>
         ))}
       </ul>
@@ -340,4 +368,3 @@ const List = ({
 };
 
 export default AnalysisResult;
-

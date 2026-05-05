@@ -11,7 +11,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { AppLayout } from "@/components/dashboard/AppLayout";
 import { useAuth } from "@/components/site/AuthProvider";
 import {
   buildHistoryFromDb,
@@ -107,7 +106,7 @@ const Insights = () => {
   }, [history]);
 
   return (
-    <AppLayout title="Insights">
+    <>
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-300 mx-auto space-y-6">
         {loadError && (
           <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
@@ -187,7 +186,7 @@ const Insights = () => {
           ))}
         </div>
       </div>
-    </AppLayout>
+    </>
   );
 };
 

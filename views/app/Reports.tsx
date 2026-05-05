@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { AppLayout } from "@/components/dashboard/AppLayout";
 import { useAuth } from "@/components/site/AuthProvider";
 import {
   buildHistoryFromDb,
@@ -52,7 +51,7 @@ const Reports = () => {
   const w = useMemo(() => weeklyFromHistory(buildHistoryFromDb(logs, sessions, goals)), [logs, sessions, goals]);
 
   return (
-    <AppLayout title="Reports">
+    <>
       <div className="px-4 md:px-8 py-6 md:py-10 max-w-3xl mx-auto space-y-6">
         {loadError && (
           <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
@@ -114,7 +113,7 @@ const Reports = () => {
           </div>
         </div>
       </div>
-    </AppLayout>
+    </>
   );
 };
 

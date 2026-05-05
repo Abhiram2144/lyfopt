@@ -3,12 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Check, ChevronLeft, ChevronRight, Sparkles, Target } from "lucide-react";
-import { AppLayout } from "@/components/dashboard/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/components/site/AuthProvider";
-import { fetchGoalsFromDb, saveMonthlyReviewToDb, type Goal } from "@/lib/sessions";
+import { fetchGoalsFromDb, fetchMonthlyReviewForMonthFromDb, saveMonthlyReviewToDb, type Goal } from "@/lib/sessions";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getErrorMessage } from "@/lib/error";
@@ -31,18 +30,27 @@ const MonthlyReview = () => {
   const { user, loading } = useAuth();
   const monthStart = new Date();
   monthStart.setDate(1);
-  const monthKey = monthStart.toISOString().slice(0, 10);
+  const monthKey = `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, "0")}-01`;
 
   const [goals, setGoals] = useState<Goal[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
 
   useEffect(() => {
     let active = true;
     const load = async () => {
       if (loading || !user) return;
       try {
-        const rows = await fetchGoalsFromDb();
+        const [rows, existingReview] = await Promise.all([
+          fetchGoalsFromDb(),
+          fetchMonthlyReviewForMonthFromDb(monthKey),
+        ]);
         if (active) setGoals(rows.filter((goal) => goal.is_active));
+        if (active && existingReview) {
+          setAnswers(existingReview.answers as Record<string, string>);
+          setSubmitted(true);
+          setLocked(true);
+        }
       } catch (error) {
         if (active) {
           setGoals([]);
@@ -54,7 +62,7 @@ const MonthlyReview = () => {
     return () => {
       active = false;
     };
-  }, [loading, user]);
+  }, [loading, monthKey, user]);
   const [step, setStep] = useState(1);
   const [submitted, setSubmitted] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -95,6 +103,7 @@ const MonthlyReview = () => {
   }, [answers]);
 
   const save = async () => {
+    if (locked) return;
     try {
       await saveMonthlyReviewToDb({ month_start: monthKey, answers });
       toast.success("Monthly review saved");
@@ -167,12 +176,18 @@ const MonthlyReview = () => {
   };
 
   return (
-    <AppLayout title="Monthly review">
+    <>
       <div className="min-h-[calc(100svh-4rem)] bg-black text-white">
         <div className="mx-auto flex min-h-[calc(100svh-4rem)] w-full max-w-6xl flex-col px-4 py-6 md:px-8 md:py-8">
           {loadError && (
             <div className="mb-4 rounded-2xl border border-white/15 bg-white/5 p-4 text-sm text-white/80">
               {loadError}
+            </div>
+          )}
+
+          {locked && (
+            <div className="mb-4 rounded-2xl border border-[#1DCD9F]/30 bg-[#1DCD9F]/10 p-4 text-sm text-white/80">
+              This month already has a review. It is now read-only.
             </div>
           )}
 
@@ -494,19 +509,21 @@ const MonthlyReview = () => {
                 </div>
 
                 <div className="mt-8 flex flex-wrap gap-3">
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setSubmitted(false);
-                      setStep(6);
-                    }}
-                    className="border border-white/10 bg-transparent text-white hover:bg-white/5"
-                  >
-                    Review answers
-                  </Button>
+                  {!locked && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setSubmitted(false);
+                        setStep(6);
+                      }}
+                      className="border border-white/10 bg-transparent text-white hover:bg-white/5"
+                    >
+                      Review answers
+                    </Button>
+                  )}
                   <Button
                     variant="hero"
-                    onClick={() => toast.success("Monthly report saved")}
+                    onClick={() => toast.success(locked ? "Monthly review already locked" : "Monthly report saved")}
                     className="bg-[#1DCD9F] text-black hover:bg-[#1DCD9F]/90"
                   >
                     Done
@@ -517,7 +534,7 @@ const MonthlyReview = () => {
           )}
         </div>
       </div>
-    </AppLayout>
+    </>
   );
 };
 
