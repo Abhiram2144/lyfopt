@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { analyzeDayWithMeta, buildPrompt, extractJson, type AnalyzeDayPayload, type AnalyzeDayResult, normalizeResult } from "@/lib/ai";
+import { analyzeDayWithMeta, buildSystemPrompt, buildUserContext, extractJson, type AnalyzeDayPayload, type AnalyzeDayResult, normalizeResult } from "@/lib/ai";
 
 export const runtime = "nodejs";
 
@@ -19,123 +19,121 @@ const devError = (label: string, error?: unknown) => {
 };
 
 /**
- * Call Gemini API once with error handling and detailed logging
+ * Call OpenAI API once with error handling and detailed logging
  */
-async function callGeminiOnce(
+async function callOpenAIOnce(
   payload: AnalyzeDayPayload,
   isRetry: boolean = false
 ): Promise<AnalyzeDayResult | null> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   
   // Validate API key early
   if (!apiKey) {
-    if (isDev) throw new Error("GEMINI_API_KEY is not configured in environment");
-    devLog("GEMINI_API_KEY missing, falling back to rule-based");
+    if (isDev) throw new Error("OPENAI_API_KEY is not configured in environment");
+    devLog("OPENAI_API_KEY missing, falling back to rule-based");
     return null;
   }
 
-  const prompt = buildPrompt(payload, isRetry);
-  devLog("GEMINI_PROMPT_SENT", { isRetry, promptLength: prompt.length });
+  const system = buildSystemPrompt();
+  const user = `${buildUserContext(payload)}${isRetry ? "\n\nThis is a retry. Return ONLY the JSON object with no other text." : ""}`;
+  
+  devLog("AI_PROMPT_SENT", { 
+    isRetry, 
+    systemLength: system.length,
+    userLength: user.length,
+    hasSystemMessage: system.length > 0
+  });
 
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+      "https://api.openai.com/v1/chat/completions",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
+          "Authorization": `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          contents: [
+          model: "gpt-4o-mini",
+          messages: [
+            ...(system ? [{ role: "system" as const, content: system }] : []),
             {
-              role: "user",
-              parts: [{ text: prompt }],
+              role: "user" as const,
+              content: user,
             },
           ],
-          generationConfig: {
-            temperature: 0.3, // Lower for more consistent JSON
-            topP: 0.9,
-            maxOutputTokens: 1200,
-            responseMimeType: "application/json",
-          },
-          safetySettings: [
-            {
-              category: "HARM_CATEGORY_UNSPECIFIED",
-              threshold: "BLOCK_NONE",
-            },
-          ],
+          temperature: 0.3, // Lower for more consistent JSON
+          max_tokens: 1200,
+          response_format: { type: "json_object" },
         }),
       }
     );
 
     if (!response.ok) {
       const errorText = await response.text();
-      devError(`GEMINI_HTTP_ERROR: ${response.status}`, errorText);
+      devError(`OPENAI_HTTP_ERROR: ${response.status}`, errorText);
       return null;
     }
 
     const json = (await response.json()) as {
-      candidates?: Array<{
-        content?: { parts?: Array<{ text?: string }> };
-        finishReason?: string;
+      choices?: Array<{
+        message?: { content?: string };
+        finish_reason?: string;
       }>;
       error?: { message: string };
     };
 
     if (json.error) {
-      devError("GEMINI_API_ERROR", json.error.message);
+      devError("OPENAI_API_ERROR", json.error.message);
       return null;
     }
 
-    if (!json.candidates?.[0]) {
-      devError("GEMINI_NO_CANDIDATES", "Empty response from Gemini");
+    if (!json.choices?.[0]) {
+      devError("OPENAI_NO_CHOICES", "Empty response from OpenAI");
       return null;
     }
 
-    const rawText = json.candidates[0].content?.parts
-      ?.map((part) => part.text ?? "")
-      .join("") ?? "";
+    const rawText = json.choices[0].message?.content ?? "";
 
-    devLog("GEMINI_RAW_RESPONSE", { 
-      finishReason: json.candidates[0].finishReason,
+    devLog("OPENAI_RAW_RESPONSE", { 
+      finishReason: json.choices[0].finish_reason,
       textLength: rawText.length 
     });
 
     if (!rawText.trim()) {
-      devError("GEMINI_EMPTY_TEXT", "No text in response");
+      devError("OPENAI_EMPTY_TEXT", "No text in response");
       return null;
     }
 
     // Extract JSON with enhanced parsing
     const extractedJson = extractJson(rawText);
     if (!extractedJson) {
-      devError("GEMINI_JSON_EXTRACTION_FAILED", rawText.slice(0, 200));
+      devError("OPENAI_JSON_EXTRACTION_FAILED", rawText.slice(0, 200));
       return null;
     }
 
-    devLog("GEMINI_JSON_EXTRACTED", { jsonLength: extractedJson.length });
+    devLog("OPENAI_JSON_EXTRACTED", { jsonLength: extractedJson.length });
 
     // Parse and normalize
     let parsed: unknown;
     try {
       parsed = JSON.parse(extractedJson);
-      devLog("GEMINI_JSON_PARSED", "Success");
+      devLog("OPENAI_JSON_PARSED", "Success");
     } catch (parseError) {
-      devError("GEMINI_JSON_PARSE_ERROR", parseError);
+      devError("OPENAI_JSON_PARSE_ERROR", parseError);
       return null;
     }
 
     const normalized = normalizeResult(parsed);
     if (!normalized) {
-      devError("GEMINI_NORMALIZATION_FAILED", parsed);
+      devError("OPENAI_NORMALIZATION_FAILED", parsed);
       return null;
     }
 
-    devLog("GEMINI_SUCCESS", "Analysis complete");
+    devLog("OPENAI_SUCCESS", "Analysis complete");
     return normalized;
   } catch (error) {
-    devError("GEMINI_CALL_EXCEPTION", error);
+    devError("OPENAI_CALL_EXCEPTION", error);
     return null;
   }
 }
@@ -163,16 +161,16 @@ export async function POST(request: NextRequest) {
       debug 
     });
 
-    // Try Gemini up to 2 times
-    let result = await callGeminiOnce(payload, false);
+    // Try OpenAI up to 2 times
+    let result = await callOpenAIOnce(payload, false);
     if (!result) {
-      devLog("GEMINI_FIRST_ATTEMPT_FAILED, retrying...");
-      result = await callGeminiOnce(payload, true);
+      devLog("OPENAI_FIRST_ATTEMPT_FAILED, retrying...");
+      result = await callOpenAIOnce(payload, true);
     }
 
     // Fallback to rule-based if both attempts fail
     if (!result) {
-      if (isDev) console.warn("⚠️  Gemini failed twice, using rule-based fallback");
+      if (isDev) console.warn("⚠️  OpenAI failed twice, using rule-based fallback");
       const fallbackAnalysis = await analyzeDayWithMeta(payload);
       return NextResponse.json({
         ...fallbackAnalysis.result,
@@ -181,10 +179,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Success - return Gemini result
+    // Success - return OpenAI result
     return NextResponse.json({
       ...result,
-      _meta: { source: "gemini" },
+      _meta: { source: "openai" },
       ...(debug ? { _debug: { payload } } : {}),
     });
   } catch (error) {

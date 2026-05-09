@@ -12,7 +12,7 @@ const tiers = [
     name: "Free",
     price: "$0",
     cadence: "forever",
-    desc: "Try the core analysis. See the value before you pay.",
+    desc: "Try the core alignment tracker. See the value before you pay.",
     features: [
       "3 AI analyses per week",
       "Basic feedback",
@@ -43,8 +43,8 @@ const tiers = [
     features: [
       "Everything in Pro",
       "Goal-based feedback",
-      "Weekly AI report",
-      "Long-horizon trend analysis",
+      "Weekly contribution summary",
+      "Long-horizon progress view",
     ],
     cta: "Get Premium",
     highlight: false,

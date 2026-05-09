@@ -8,7 +8,7 @@ import { AppLayout } from "./AppLayout";
 const titles: Record<string, string> = {
   "/app": "Dashboard",
   "/app/log": "Daily log",
-  "/app/analysis": "Analysis",
+  "/app/analysis": "Dashboard",
   "/app/goals": "Goals",
   "/app/insights": "Insights",
   "/app/history": "History",

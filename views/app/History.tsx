@@ -64,7 +64,7 @@ const History = () => {
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <h1 className="font-display text-2xl md:text-3xl font-semibold">History</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Every logged day. Click one to revisit the full analysis.
+            Every logged day. Click one to revisit the day score.
           </p>
         </motion.div>
 
@@ -74,7 +74,7 @@ const History = () => {
             return (
               <Link
                 key={d.date}
-                href="/app/analysis"
+                href="/app"
                 onClick={() => sessionStorage.setItem("lyfopt:analyze:logId", d.log_id)}
                 className={cn(
                   "flex items-center gap-4 px-5 py-4 hover:bg-background/40 transition-colors group",

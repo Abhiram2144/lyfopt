@@ -226,7 +226,7 @@ const DailyLog = () => {
   const runAnalysis = () => {
     setSubmitting(true);
     sessionStorage.setItem("lyfopt:analyze:logId", logId);
-    setTimeout(() => router.push("/app/analysis?debugAi=1"), 500);
+    setTimeout(() => router.push("/app?debugAi=1"), 500);
   };
 
   return (
@@ -415,7 +415,7 @@ const DailyLog = () => {
           disabled={submitting || sessions.length === 0}
         >
           <Sparkles className="h-4 w-4" />
-          {submitting ? "Sending to AI..." : "Run analysis"}
+          {submitting ? "Updating dashboard..." : "Refresh dashboard"}
         </Button>
       </div>
     </>

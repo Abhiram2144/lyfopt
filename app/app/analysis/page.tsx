@@ -1,5 +1,5 @@
-import AnalysisResult from "@/views/app/AnalysisResult";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <AnalysisResult />;
+  redirect("/app");
 }

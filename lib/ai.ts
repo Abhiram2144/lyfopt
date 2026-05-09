@@ -2,6 +2,7 @@ import { computeMetrics, fmtMins, todayDate, type ActivitySession, type DailyLog
 
 export type AnalyzeTone = "strict" | "balanced" | "motivational";
 export type AnalyzeMood = "low" | "neutral" | "good";
+export type SessionCategory = "dopamine" | "physical" | "deep_work" | "entertainment" | "general";
 
 export interface AnalyzeDayPayload {
     sessions: ActivitySession[];
@@ -20,6 +21,12 @@ export interface AnalyzeDayPayload {
         strengths: string[];
     };
     pastSummary?: string;
+    recentPatterns?: {
+        recurringProblems: string[];
+        recurringWins: string[];
+        consistencyScore: number;
+        last7DayAverage: number;
+    };
 }
 
 export interface AnalyzeDayResult {
@@ -30,12 +37,38 @@ export interface AnalyzeDayResult {
     problems: string[];
     suggestions: string[];
     pattern_detected: string;
+    contribution_levels?: string[];
 }
 
-export type AnalyzeSource = "gemini" | "fallback";
+export type AnalyzeSource = "openai" | "fallback";
 
 export interface AnalyzeDayMeta {
     source: AnalyzeSource;
+}
+
+export interface BehavioralSignals {
+    lateWakeup: boolean;
+    lateSleep: boolean;
+    fragmentedWork: boolean;
+    excessiveEntertainment: boolean;
+    noDeepWork: boolean;
+    taskSwitching: boolean;
+    highDistractionClusters: boolean;
+    signals: string[];
+}
+
+export interface GoalAlignment {
+    alignmentPercentage: number;
+    alignedActivities: string[];
+    unalignedActivities: string[];
+}
+
+export interface TemporalPatterns {
+    peakFocusWindow: string;
+    distractionCluster: string;
+    longestDeepWorkBlock: string;
+    earlyMorningActivity: boolean;
+    lateNightActivity: boolean;
 }
 
 const OUTPUT_KEYS = [
@@ -46,11 +79,211 @@ const OUTPUT_KEYS = [
     "problems",
     "suggestions",
     "pattern_detected",
+    "contribution_levels",
 ] as const;
 
 const sanitizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
 const cleanArray = (value: unknown) => (Array.isArray(value) ? value.map((item) => sanitizeText(item)).filter(Boolean) : []);
+
+const classifyContribution = (title: string, goalTitle: string, minutes: number) => {
+    const text = `${title} ${goalTitle}`.toLowerCase();
+    const relevant = /coding|study|research|project|build|design|write|learn|develop|practice|ai|ml/.test(text);
+    const longBlock = minutes >= 90;
+    const exactMatch = title.toLowerCase().includes(goalTitle.toLowerCase()) || goalTitle.toLowerCase().includes(title.toLowerCase());
+
+    if (exactMatch || (relevant && longBlock)) return "strong contribution";
+    if (relevant || minutes >= 45) return "moderate contribution";
+    return "weak contribution";
+};
+
+/**
+ * Parse hour from HH:MM format
+ */
+const parseHour = (timeStr: string): number => {
+    try {
+        const [hour] = timeStr.split(":").map(Number);
+        return hour ?? 0;
+    } catch {
+        return 0;
+    }
+};
+
+/**
+ * Classify a session by its title to detect behavior patterns
+ */
+const classifySession = (title: string): SessionCategory => {
+    const t = title.toLowerCase();
+
+    if (t.includes("youtube") || t.includes("instagram") || t.includes("tiktok") || t.includes("reddit"))
+        return "dopamine";
+
+    if (t.includes("gym") || t.includes("football") || t.includes("run") || t.includes("exercise") || t.includes("walk"))
+        return "physical";
+
+    if (
+        t.includes("study") ||
+        t.includes("deep work") ||
+        t.includes("coding") ||
+        t.includes("writing") ||
+        t.includes("research")
+    )
+        return "deep_work";
+
+    if (t.includes("gaming") || t.includes("game") || t.includes("play"))
+        return "entertainment";
+
+    return "general";
+};
+
+/**
+ * Detect behavioral signals from daily log and sessions
+ */
+const detectBehavioralSignals = (payload: AnalyzeDayPayload): BehavioralSignals => {
+    const wakeHour = parseHour(payload.dailyLog.wake_time);
+    const sleepHour = parseHour(payload.dailyLog.sleep_time);
+
+    const lateWakeup = wakeHour > 10;
+    const lateSleep = sleepHour > 1 && sleepHour < 6; // 1AM-6AM
+
+    // Check for fragmented work
+    const deepWorkSessions = payload.sessions.filter((s) => classifySession(s.title) === "deep_work");
+    const fragmentedWork = deepWorkSessions.length > 3; // More than 3 deep work blocks = fragmented
+
+    // Check for excessive entertainment
+    const entertainmentSessions = payload.sessions.filter((s) => classifySession(s.title) === "entertainment");
+    const dopamineSessions = payload.sessions.filter((s) => classifySession(s.title) === "dopamine");
+    const excessiveEntertainment = entertainmentSessions.length + dopamineSessions.length > 3;
+
+    const noDeepWork = deepWorkSessions.length === 0;
+
+    // Task switching: many short sessions
+    const taskSwitching = payload.sessions.length > 8;
+
+    const signals: string[] = [];
+    if (lateWakeup) signals.push("Woke up late (after 10 AM)");
+    if (lateSleep) signals.push("Slept late (after 1 AM)");
+    if (fragmentedWork) signals.push("Deep work sessions fragmented across day");
+    if (excessiveEntertainment) signals.push("Multiple entertainment/dopamine sessions");
+    if (noDeepWork) signals.push("No dedicated deep work time");
+    if (taskSwitching) signals.push("High task switching detected");
+
+    // Distraction clusters (many dopamine sessions in late hours)
+    const lateNightDopamine = payload.sessions.filter(
+        (s) => (classifySession(s.title) === "dopamine" || classifySession(s.title) === "entertainment") && parseHour(s.start_time) > 22
+    );
+    const highDistractionClusters = lateNightDopamine.length >= 2;
+    if (highDistractionClusters) signals.push("Distraction cluster detected late night (10 PM+)");
+
+    return {
+        lateWakeup,
+        lateSleep,
+        fragmentedWork,
+        excessiveEntertainment,
+        noDeepWork,
+        taskSwitching,
+        highDistractionClusters,
+        signals,
+    };
+};
+
+/**
+ * Calculate which sessions align with stated goals
+ */
+const calculateGoalAlignment = (payload: AnalyzeDayPayload): GoalAlignment => {
+    if (!payload.goals.length) {
+        return {
+            alignmentPercentage: 0,
+            alignedActivities: [],
+            unalignedActivities: [],
+        };
+    }
+
+    const goalTitlesLower = payload.goals.map((g) => g.title.toLowerCase());
+    const alignedActivities: string[] = [];
+    const unalignedActivities: string[] = [];
+
+    payload.sessions.forEach((session) => {
+        const sessionTitleLower = session.title.toLowerCase();
+        const isAligned = goalTitlesLower.some((goal) => sessionTitleLower.includes(goal) || goal.includes(sessionTitleLower));
+
+        if (isAligned) {
+            alignedActivities.push(session.title);
+        } else {
+            unalignedActivities.push(session.title);
+        }
+    });
+
+    const alignmentPercentage =
+        payload.sessions.length > 0 ? Math.round((alignedActivities.length / payload.sessions.length) * 100) : 0;
+
+    return {
+        alignmentPercentage,
+        alignedActivities: [...new Set(alignedActivities)],
+        unalignedActivities: [...new Set(unalignedActivities)],
+    };
+};
+
+/**
+ * Detect temporal patterns: peak hours, distraction windows, deep work blocks
+ */
+const detectTemporalPatterns = (payload: AnalyzeDayPayload): TemporalPatterns => {
+    const deepWorkSessions = payload.sessions.filter((s) => classifySession(s.title) === "deep_work");
+    const entertainmentSessions = payload.sessions.filter(
+        (s) => classifySession(s.title) === "dopamine" || classifySession(s.title) === "entertainment"
+    );
+
+    // Find peak focus window (when deep work happens)
+    let peakFocusWindow = "Not detected";
+    if (deepWorkSessions.length > 0) {
+        const firstDeepWork = deepWorkSessions[0];
+        const deepWorkHour = parseHour(firstDeepWork.start_time);
+        if (deepWorkHour >= 6 && deepWorkHour < 12) peakFocusWindow = "Early morning (6 AM–12 PM)";
+        else if (deepWorkHour >= 12 && deepWorkHour < 18) peakFocusWindow = "Afternoon (12 PM–6 PM)";
+        else if (deepWorkHour >= 18) peakFocusWindow = "Evening (6 PM–11 PM)";
+    }
+
+    // Find distraction cluster
+    let distractionCluster = "Not detected";
+    if (entertainmentSessions.length > 0) {
+        const avgHour = Math.round(
+            entertainmentSessions.reduce((sum, s) => sum + parseHour(s.start_time), 0) / entertainmentSessions.length
+        );
+        if (avgHour >= 22 || avgHour < 6) distractionCluster = "Late night (10 PM–6 AM)";
+        else if (avgHour >= 12 && avgHour < 18) distractionCluster = "Afternoon slump (12 PM–6 PM)";
+        else distractionCluster = `Around ${avgHour}:00`;
+    }
+
+    // Longest deep work block
+    let longestDeepWorkBlock = "0 min";
+    if (deepWorkSessions.length > 0) {
+        const durations = deepWorkSessions.map((s) => {
+            const [startHour, startMin] = s.start_time.split(":").map(Number);
+            const [endHour, endMin] = s.end_time.split(":").map(Number);
+            return (endHour - startHour) * 60 + (endMin - startMin);
+        });
+        const maxDuration = Math.max(...durations);
+        longestDeepWorkBlock = fmtMins(maxDuration);
+    }
+
+    const earlyMorningActivity = payload.sessions.some((s) => {
+        const hour = parseHour(s.start_time);
+        return hour < 6;
+    });
+
+    const lateNightActivity = payload.sessions.some((s) => {
+        const hour = parseHour(s.start_time);
+        return hour > 22;
+    });
+
+    return {
+        peakFocusWindow,
+        distractionCluster,
+        longestDeepWorkBlock,
+        earlyMorningActivity,
+        lateNightActivity,
+    };
+};
 
 const normalizeResult = (value: unknown): AnalyzeDayResult | null => {
     if (!value || typeof value !== "object") return null;
@@ -64,6 +297,7 @@ const normalizeResult = (value: unknown): AnalyzeDayResult | null => {
     const positives = cleanArray(record.positives);
     const problems = cleanArray(record.problems);
     const suggestions = cleanArray(record.suggestions);
+    const contributionLevels = cleanArray(record.contribution_levels);
 
     // Only require these three critical fields
     if (!summary || !coreProblem || !keyAction) return null;
@@ -76,6 +310,7 @@ const normalizeResult = (value: unknown): AnalyzeDayResult | null => {
         problems,
         suggestions,
         pattern_detected: patternDetected || "No specific pattern detected.",
+        ...(contributionLevels.length ? { contribution_levels: contributionLevels } : {}),
     };
 };
 
@@ -198,13 +433,33 @@ const ruleBasedOutcome = (payload: AnalyzeDayPayload): AnalyzeDayResult => {
 };
 
 const buildContext = (payload: AnalyzeDayPayload) => {
+    // Compute metrics using the same logic as fallback
+    const referenceLog: DailyLog = {
+        id: "analysis-context",
+        date: todayDate(),
+        wake_time: payload.dailyLog.wake_time,
+        sleep_time: payload.dailyLog.sleep_time,
+        energy_level: Math.max(1, Math.min(5, Math.round(payload.dailyLog.energy_level || 3))) as 1 | 2 | 3 | 4 | 5,
+        focus_level: Math.max(1, Math.min(5, Math.round(payload.dailyLog.focus_level || 3))) as 1 | 2 | 3 | 4 | 5,
+        mood: payload.dailyLog.mood,
+        day_rating: Math.max(1, Math.min(10, Math.round(payload.dailyLog.day_rating || 5))) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10,
+        created_at: new Date().toISOString(),
+    };
+
+    const metrics = computeMetrics(referenceLog, payload.sessions, payload.goals);
+    const signals = detectBehavioralSignals(payload);
+    const alignment = calculateGoalAlignment(payload);
+    const temporal = detectTemporalPatterns(payload);
+
     const wakeToSleep = `${payload.dailyLog.wake_time} → ${payload.dailyLog.sleep_time}`;
-    
+
+    // Classify sessions
     const sessionSummary = payload.sessions
         .map((s) => {
             const status = s.intentional ? "planned" : "unplanned";
+            const category = classifySession(s.title);
             const diff = s.difficulty ? ` (difficulty: ${s.difficulty})` : "";
-            return `• ${s.title || "Session"} ${s.start_time}–${s.end_time} [${status}${diff}]`;
+            return `• ${s.title || "Session"} ${s.start_time}–${s.end_time}\n  Category: ${category} | Intentional: ${status}${diff}`;
         })
         .join("\n");
 
@@ -218,64 +473,126 @@ Time: ${wakeToSleep}
 Energy: ${payload.dailyLog.energy_level}/5 | Focus: ${payload.dailyLog.focus_level}/5
 Mood: ${payload.dailyLog.mood} | Day Rating: ${payload.dailyLog.day_rating}/10
 
-=== SESSIONS LOGGED ===
+=== COMPUTED METRICS ===
+Productive Time: ${fmtMins(metrics.productive)}
+Distraction Time: ${fmtMins(metrics.distraction)}
+Untracked Time: ${fmtMins(metrics.untracked)}
+Goal Alignment Score: ${metrics.goalScore}%
+Efficiency Score: ${metrics.efficiencyScore}%
+Awake Duration: ${fmtMins(metrics.awakeMinutes)}
+
+=== SESSIONS LOGGED (CLASSIFIED) ===
 ${sessionSummary || "(none logged)"}
 
 === GOALS ===
 ${goalsSummary || "(none defined)"}
+
+=== GOAL ALIGNMENT ANALYSIS ===
+${alignment.alignmentPercentage}% of sessions supported stated goals.
+Aligned activities: ${alignment.alignedActivities.join(", ") || "none"}
+Unrelated activities: ${alignment.unalignedActivities.join(", ") || "none"}
+
+=== TEMPORAL PATTERNS ===
+Peak focus window: ${temporal.peakFocusWindow}
+Distraction cluster: ${temporal.distractionCluster}
+Longest deep work block: ${temporal.longestDeepWorkBlock}
+
+=== DETECTED BEHAVIORAL SIGNALS ===
+${signals.signals.map((s) => `- ${s}`).join("\n") || "- No significant patterns detected"}
+
 ${payload.userProfile ? `\n=== USER PROFILE ===
 Tone: ${payload.userProfile.tone}
 Strengths: ${payload.userProfile.strengths.join(", ") || "not captured"}
 Growth areas: ${payload.userProfile.weaknesses.join(", ") || "not captured"}` : ""}
-${payload.pastSummary ? `\n=== PREVIOUS SUMMARY (for continuity) ===
+
+${
+    payload.recentPatterns
+        ? `\n=== RECENT HISTORY (LAST 7 DAYS) ===
+Consistency Score: ${payload.recentPatterns.consistencyScore}%
+7-Day Average Performance: ${payload.recentPatterns.last7DayAverage}%
+Recurring wins: ${payload.recentPatterns.recurringWins.join(", ") || "none identified"}
+Recurring problems: ${payload.recentPatterns.recurringProblems.join(", ") || "none identified"}`
+        : ""
+}
+
+${payload.pastSummary ? `\n=== PREVIOUS ANALYSIS (FOR CONTINUITY) ===
 ${payload.pastSummary}` : ""}
 `;
 };
 
-const buildPrompt = (payload: AnalyzeDayPayload, isRetry = false) => {
-    const tone = payload.userProfile?.tone ?? "balanced";
-    const toneInstructions: Record<AnalyzeTone, string> = {
-        strict: "Be direct, precise, and unsparing. Focus on accountability and what the user is actually avoiding.",
-        balanced: "Be honest, clear, and fair. Identify the real leverage point without being harsh.",
-        motivational: "Be encouraging and forward-looking without becoming generic. Acknowledge real effort while clarifying the next step.",
-    };
+const buildSystemPrompt = (): string => {
+    return `You are an intelligent goal alignment assistant.
 
-    const lines = [
-        "You are a behavior analyst for LyfOpt, not a generic productivity assistant.",
-        "Your role: identify patterns, avoidance, and leverage points in the user's actual behavior.",
-        "",
-        `FEEDBACK STYLE: ${toneInstructions[tone]}`,
-        "",
-        "=== ANALYSIS CHECKLIST (think internally, then respond) ===",
-        "• Where did time actually disappear?",
-        "• Did the user avoid difficult or important tasks?",
-        "• How well does today's behavior align with stated goals?",
-        "• What do energy and focus levels tell you about decisions made?",
-        "• Is there a repeating pattern that should be called out?",
-        "",
-        `=== DAY DATA ===`,
-        buildContext(payload),
-        "",
-        "=== OUTPUT INSTRUCTIONS ===",
-        "You MUST respond with ONLY valid JSON, no markdown, explanation, or extra text.",
-        "Response must start with { and end with }.",
-        "Use exactly these keys:",
-        JSON.stringify({
-            summary: "1-2 sentence overview of the day's behavioral pattern",
-            core_problem: "the actual issue at hand (not generic)",
-            key_action: "one specific, actionable next step",
-            positives: ["array of 1-3 real wins from today"],
-            problems: ["array of 1-3 actual issues observed"],
-            suggestions: ["array of 1-3 concrete suggestions"],
-            pattern_detected: "the repeating pattern or habit you identified",
-        }, null, 2),
-        "",
-        isRetry ? "This is a retry. Return ONLY the JSON object with no other text." : "",
-    ]
-        .filter(Boolean)
-        .join("\n");
+Your role is to determine whether the user's daily activities contributed toward their stated goals.
 
-    return lines;
+Be concise, objective, and specific.
+
+Focus on:
+- contribution
+- consistency
+- alignment
+- progress
+
+Avoid generic motivation, therapy language, and psychological analysis.
+
+Prioritize:
+1. Goal contribution
+2. Time spent on goal-linked work
+3. Unaligned activities
+4. Consistency across recent days
+
+Return short, scannable observations only.`;
+};
+
+const buildUserContext = (payload: AnalyzeDayPayload): string => {
+    const totalAlignedMinutes = payload.sessions
+        .filter((session) => !!payload.goals.find((goal) => session.title.toLowerCase().includes(goal.title.toLowerCase())))
+        .reduce((sum, session) => sum + session.duration_minutes, 0);
+
+    const totalMinutes = payload.sessions.reduce((sum, session) => sum + session.duration_minutes, 0);
+    const alignmentPercent = totalMinutes > 0 ? Math.round((totalAlignedMinutes / totalMinutes) * 100) : 0;
+    const goalList = payload.goals.map((goal) => `- ${goal.title} (${goal.priority})`).join("\n") || "- None";
+    const sessionList = payload.sessions
+        .map((session) => {
+            const goal = payload.goals.find((item) => session.title.toLowerCase().includes(item.title.toLowerCase()));
+            const contribution = goal ? classifyContribution(session.title, goal.title, session.duration_minutes) : "unrelated";
+            return `- ${session.title} (${fmtMins(session.duration_minutes)}) · ${contribution}${goal ? ` → ${goal.title}` : ""}`;
+        })
+        .join("\n") || "- No sessions logged";
+
+    const userContextLines = [
+        `=== GOAL ALIGNMENT INPUT ===
+Alignment today: ${alignmentPercent}%
+Goal-linked minutes: ${fmtMins(totalAlignedMinutes)}
+Total logged minutes: ${fmtMins(totalMinutes)}
+
+Goals:
+${goalList}
+
+Sessions:
+${sessionList}
+
+Recent summary: ${payload.pastSummary || "none"}
+
+Recent patterns: ${payload.recentPatterns ? `consistency ${payload.recentPatterns.consistencyScore}%, 7-day average ${payload.recentPatterns.last7DayAverage}%` : "none"}
+
+Output rules:
+- Keep it short
+- Use simple, direct language
+- Focus on goal contribution
+- Classify meaningful activities as strong contribution, moderate contribution, weak contribution, or unrelated
+- Mention the top goal or the biggest unaligned activity when relevant
+- Return only JSON`,
+    ];
+
+    return userContextLines.join("\n");
+};
+
+const buildPrompt = (payload: AnalyzeDayPayload, isRetry = false): string => {
+    const systemPrompt = buildSystemPrompt();
+    const userContext = buildUserContext(payload);
+
+    return `${systemPrompt}\n\n${userContext}${isRetry ? "\n\nRetry: return only JSON." : ""}`;
 };
 
 // Rule-based fallback (used when Gemini is unavailable or fails)
@@ -291,4 +608,14 @@ export const analyzeDay = async (payload: AnalyzeDayPayload): Promise<AnalyzeDay
 };
 
 // Exported for API route usage
-export { buildPrompt, extractJson, normalizeResult };
+export { 
+    buildPrompt, 
+    extractJson, 
+    normalizeResult,
+    buildSystemPrompt,
+    buildUserContext,
+    classifySession,
+    detectBehavioralSignals,
+    calculateGoalAlignment,
+    detectTemporalPatterns,
+};

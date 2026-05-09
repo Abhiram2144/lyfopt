@@ -22,8 +22,8 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 const plans = [
-  { id: "free", name: "Free", desc: "Daily logs + basic analysis." },
-  { id: "pro", name: "Pro", desc: "Unlimited insights + weekly reports." },
+  { id: "free", name: "Free", desc: "Daily logs + basic alignment." },
+  { id: "pro", name: "Pro", desc: "Unlimited insights + weekly progress summaries." },
   { id: "premium", name: "Premium", desc: "Personalized AI coach + priority models." },
 ];
 
