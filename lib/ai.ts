@@ -86,6 +86,11 @@ const sanitizeText = (value: unknown) => (typeof value === "string" ? value.trim
 
 const cleanArray = (value: unknown) => (Array.isArray(value) ? value.map((item) => sanitizeText(item)).filter(Boolean) : []);
 
+const toSentence = (value: string) => {
+    if (!value) return "";
+    return /[.!?]$/.test(value) ? value : `${value}.`;
+};
+
 const classifyContribution = (title: string, goalTitle: string, minutes: number) => {
     const text = `${title} ${goalTitle}`.toLowerCase();
     const relevant = /coding|study|research|project|build|design|write|learn|develop|practice|ai|ml/.test(text);
@@ -289,28 +294,101 @@ const normalizeResult = (value: unknown): AnalyzeDayResult | null => {
     if (!value || typeof value !== "object") return null;
     const record = value as Record<string, unknown>;
 
-    // RELAXED VALIDATION: require only critical fields
-    const summary = sanitizeText(record.summary);
-    const coreProblem = sanitizeText(record.core_problem);
-    const keyAction = sanitizeText(record.key_action);
-    const patternDetected = sanitizeText(record.pattern_detected);
-    const positives = cleanArray(record.positives);
-    const problems = cleanArray(record.problems);
-    const suggestions = cleanArray(record.suggestions);
-    const contributionLevels = cleanArray(record.contribution_levels);
+    const overall = record.overall && typeof record.overall === "object" ? (record.overall as Record<string, unknown>) : null;
+    const goalAlignment =
+        record.goal_alignment && typeof record.goal_alignment === "object"
+            ? (record.goal_alignment as Record<string, unknown>)
+            : null;
+    const activities = record.activities && typeof record.activities === "object" ? (record.activities as Record<string, unknown>) : null;
+    const observations = Array.isArray(record.observations) ? record.observations : [];
 
-    // Only require these three critical fields
+    const summary =
+        sanitizeText(record.summary) ||
+        [
+            sanitizeText(record.goal_contribution || overall?.goal_contribution || goalAlignment?.alignment_today),
+            sanitizeText(record.goal_linked_minutes || record.time_spent_on_goal_linked_work || overall?.goal_linked_minutes || goalAlignment?.goal_linked_minutes),
+            sanitizeText(record.top_unaligned_activity || record.biggest_unaligned_activity || overall?.top_unaligned_activity || goalAlignment?.top_unaligned_activity),
+        ]
+            .filter(Boolean)
+            .join(" | ");
+
+    const coreProblem =
+        sanitizeText(record.core_problem) ||
+        sanitizeText(record.top_unaligned_activity) ||
+        sanitizeText(record.biggest_unaligned_activity) ||
+        sanitizeText(overall?.top_unaligned_activity) ||
+        sanitizeText(goalAlignment?.top_unaligned_activity) ||
+        (sanitizeText(record.goal_contribution || overall?.goal_contribution || goalAlignment?.alignment_today) === "0%"
+            ? "None of today's logged work clearly supported your stated goals"
+            : "");
+
+    const keyAction =
+        sanitizeText(record.key_action) ||
+        (sanitizeText(record.top_goal)
+            ? `Protect a focused block for ${sanitizeText(record.top_goal)} tomorrow`
+            : coreProblem
+                ? "Schedule your next block around the most goal-linked activity and cut the main unaligned one"
+                : "");
+
+    const patternDetected =
+        sanitizeText(record.pattern_detected) ||
+        sanitizeText(record.consistency) ||
+        "No specific pattern detected.";
+
+    const positives = cleanArray(record.positives);
+    const problems =
+        cleanArray(record.problems).length > 0
+            ? cleanArray(record.problems)
+            : cleanArray(record.unaligned_activities).length > 0
+                ? cleanArray(record.unaligned_activities)
+                : [coreProblem].filter(Boolean);
+
+    const suggestions =
+        cleanArray(record.suggestions).length > 0
+            ? cleanArray(record.suggestions)
+            : [keyAction].filter(Boolean);
+
+    const observedContributionLevels = observations
+        .map((item) => {
+            if (!item || typeof item !== "object") return "";
+            const observation = item as Record<string, unknown>;
+            const activity = sanitizeText(observation.activity);
+            const duration = sanitizeText(observation.duration);
+            const contribution = sanitizeText(observation.contribution);
+            if (!activity && !contribution) return "";
+            return [activity, duration ? `(${duration})` : "", contribution ? `- ${contribution}` : ""].filter(Boolean).join(" ");
+        })
+        .filter(Boolean);
+
+    const activityContributionLevels = activities
+        ? Object.entries(activities)
+              .map(([key, item]) => {
+                  if (!item || typeof item !== "object") return "";
+                  const activity = key.replace(/_/g, " ");
+                  const details = item as Record<string, unknown>;
+                  const duration = sanitizeText(details.duration);
+                  const contribution = sanitizeText(details.contribution);
+                  if (!contribution) return "";
+                  return [activity, duration ? `(${duration})` : "", `- ${contribution}`].filter(Boolean).join(" ");
+              })
+              .filter(Boolean)
+        : [];
+
+    const contributionLevels = cleanArray(record.contribution_levels);
+    const normalizedContributionLevels =
+        contributionLevels.length > 0 ? contributionLevels : [...observedContributionLevels, ...activityContributionLevels];
+
     if (!summary || !coreProblem || !keyAction) return null;
 
     return {
-        summary,
-        core_problem: coreProblem,
-        key_action: keyAction,
+        summary: toSentence(summary),
+        core_problem: toSentence(coreProblem),
+        key_action: toSentence(keyAction),
         positives,
         problems,
         suggestions,
-        pattern_detected: patternDetected || "No specific pattern detected.",
-        ...(contributionLevels.length ? { contribution_levels: contributionLevels } : {}),
+        pattern_detected: toSentence(patternDetected),
+        ...(normalizedContributionLevels.length ? { contribution_levels: normalizedContributionLevels } : {}),
     };
 };
 
@@ -525,23 +603,24 @@ const buildSystemPrompt = (): string => {
 
 Your role is to determine whether the user's daily activities contributed toward their stated goals.
 
-Be concise, objective, and specific.
+Return exactly one JSON object with these keys:
+- summary: string
+- core_problem: string
+- key_action: string
+- positives: string[]
+- problems: string[]
+- suggestions: string[]
+- pattern_detected: string
+- contribution_levels: string[]
 
-Focus on:
-- contribution
-- consistency
-- alignment
-- progress
-
-Avoid generic motivation, therapy language, and psychological analysis.
-
-Prioritize:
-1. Goal contribution
-2. Time spent on goal-linked work
-3. Unaligned activities
-4. Consistency across recent days
-
-Return short, scannable observations only.`;
+Rules:
+- Use the exact key names above.
+- Do not add wrapper objects like "overall", "goal_alignment", or "activities".
+- Do not rename fields.
+- Keep every string concise, concrete, and direct.
+- Focus on contribution, consistency, alignment, and progress.
+- Avoid generic motivation, therapy language, and psychological analysis.
+- If there is little or no goal-linked work, say that plainly in summary, core_problem, and key_action.`;
 };
 
 const buildUserContext = (payload: AnalyzeDayPayload): string => {
@@ -582,7 +661,18 @@ Output rules:
 - Focus on goal contribution
 - Classify meaningful activities as strong contribution, moderate contribution, weak contribution, or unrelated
 - Mention the top goal or the biggest unaligned activity when relevant
-- Return only JSON`,
+- Return only JSON
+- Use this exact schema:
+{
+  "summary": "string",
+  "core_problem": "string",
+  "key_action": "string",
+  "positives": ["string"],
+  "problems": ["string"],
+  "suggestions": ["string"],
+  "pattern_detected": "string",
+  "contribution_levels": ["string"]
+}`,
     ];
 
     return userContextLines.join("\n");

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, Flame, Target, Clock, TrendingUp, Plus, CheckCircle2, AlertTriangle } from "lucide-react";
+import { ArrowRight, Flame, TrendingUp, Plus, AlertTriangle, FolderKanban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/site/AuthProvider";
@@ -11,6 +11,7 @@ import {
   buildHistoryFromDb,
   computeMetrics,
   computeStreaks,
+  fetchDailyAnalysisForLogFromDb,
   fetchDailyLogsFromDb,
   fetchGoalsFromDb,
   fetchSessionsFromDb,
@@ -21,7 +22,7 @@ import {
   type DailyLog,
   type Goal,
 } from "@/lib/sessions";
-import type { AnalyzeDayPayload, AnalyzeDayResult } from "@/lib/ai";
+import type { AnalyzeDayResult } from "@/lib/ai";
 
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
@@ -47,7 +48,6 @@ export default function GoalDashboard() {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [aiInsight, setAiInsight] = useState<AnalyzeDayResult | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -64,6 +64,10 @@ export default function GoalDashboard() {
         setLogs(loadedLogs);
         setSessions(loadedSessions);
         setGoals(loadedGoals);
+        const today = loadedLogs.find((entry) => entry.date === todayDate()) ?? null;
+        const analysis = today ? await fetchDailyAnalysisForLogFromDb(today.id) : null;
+        if (!active) return;
+        setAiInsight(analysis);
       } catch (error) {
         if (!active) return;
         setLoadError(error instanceof Error ? error.message : "Unable to load the dashboard.");
@@ -78,7 +82,10 @@ export default function GoalDashboard() {
 
   const history = useMemo(() => buildHistoryFromDb(logs, sessions, goals), [logs, sessions, goals]);
   const todayLog = logs.find((entry) => entry.date === todayDate()) ?? null;
-  const todaySessions = todayLog ? sessions.filter((session) => session.log_id === todayLog.id) : [];
+  const todaySessions = useMemo(
+    () => (todayLog ? sessions.filter((session) => session.log_id === todayLog.id) : []),
+    [sessions, todayLog],
+  );
   const metrics = todayLog ? computeMetrics(todayLog, todaySessions, goals) : null;
   const streaks = computeStreaks(logs);
 
@@ -99,7 +106,7 @@ export default function GoalDashboard() {
       : "down"
     : "flat";
 
-  const topGoalWeeklyAverage = useMemo(() => {
+  const topGoalWeeklyAverage = (() => {
     if (!topGoal) return 0;
     const lastSeven = history.slice(-7);
     const goalTotals = lastSeven.map((entry) => {
@@ -110,7 +117,7 @@ export default function GoalDashboard() {
       return dayMetrics.goalBreakdown.find((goal) => goal.goal_id === topGoal.goal_id)?.minutes ?? 0;
     });
     return Math.round(goalTotals.reduce((sum, minutes) => sum + minutes, 0) / Math.max(goalTotals.length, 1));
-  }, [goals, history, logs, sessions, topGoal]);
+  })();
   const topGoalDelta = topGoal ? topGoal.minutes - topGoalWeeklyAverage : 0;
 
   const heatmapDays = history.slice(-28);
@@ -118,53 +125,39 @@ export default function GoalDashboard() {
     date: entry.date,
     value: entry.score,
   }));
+  const goalProgress = useMemo(() => {
+    const totals = new Map<string, { goal_id: string; title: string; totalMinutes: number; todayMinutes: number; sessionsCount: number }>();
 
-  useEffect(() => {
-    let active = true;
+    for (const goal of goals) {
+      totals.set(goal.id, {
+        goal_id: goal.id,
+        title: goal.title,
+        totalMinutes: 0,
+        todayMinutes: 0,
+        sessionsCount: 0,
+      });
+    }
 
-    const run = async () => {
-      if (loading || !user || !todayLog || !goals.length || !todaySessions.length) {
-        setAiInsight(null);
-        return;
+    for (const session of sessions) {
+      const matchedGoal = matchGoalForTitle(session.title, goals);
+      if (!matchedGoal) continue;
+      const current = totals.get(matchedGoal.id);
+      if (!current) continue;
+      current.totalMinutes += session.duration_minutes;
+      current.sessionsCount += 1;
+      if (todayLog && session.log_id === todayLog.id) {
+        current.todayMinutes += session.duration_minutes;
       }
+    }
 
-      setAiLoading(true);
-      try {
-        const payload: AnalyzeDayPayload = {
-          sessions: todaySessions,
-          goals,
-          dailyLog: {
-            wake_time: todayLog.wake_time,
-            sleep_time: todayLog.sleep_time,
-            energy_level: todayLog.energy_level,
-            focus_level: todayLog.focus_level,
-            mood: todayLog.mood,
-            day_rating: todayLog.day_rating,
-          },
-        };
+    const all = Array.from(totals.values()).sort((a, b) => b.totalMinutes - a.totalMinutes);
+    const maxMinutes = all[0]?.totalMinutes ?? 0;
 
-        const response = await fetch("/api/analyze-day", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-
-        const body = (await response.json()) as AnalyzeDayResult;
-        if (!active) return;
-        setAiInsight(response.ok ? body : null);
-      } catch {
-        if (!active) return;
-        setAiInsight(null);
-      } finally {
-        if (active) setAiLoading(false);
-      }
-    };
-
-    void run();
-    return () => {
-      active = false;
-    };
-  }, [goals, loading, todayLog, todaySessions, user]);
+    return all.map((goal) => ({
+      ...goal,
+      width: maxMinutes > 0 ? Math.max(8, Math.round((goal.totalMinutes / maxMinutes) * 100)) : 0,
+    }));
+  }, [goals, sessions, todayLog]);
 
   return (
     <div className="px-4 md:px-8 py-6 md:py-10 max-w-7xl mx-auto space-y-6">
@@ -232,8 +225,8 @@ export default function GoalDashboard() {
               />
               <InfoCard
                   label="AI observation"
-                  value={aiLoading ? "Reading your day" : aiInsight?.summary ?? "Waiting for data"}
-                  subvalue={aiInsight?.contribution_levels?.[0] ?? "Tiny insight only"}
+                  value={aiInsight?.summary ?? "Run today’s analysis from the daily log"}
+                  subvalue={aiInsight?.contribution_levels?.[0] ?? "Saved after your daily check-in"}
                   tone="warn"
               />
             </div>
@@ -271,6 +264,40 @@ export default function GoalDashboard() {
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="rounded-3xl border border-border bg-card p-5 md:p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-display text-lg font-semibold">Goal progress so far</h2>
+              <FolderKanban className="h-4 w-4 text-muted-foreground" />
+            </div>
+            {goalProgress.length > 0 ? (
+              <div className="space-y-4">
+                {goalProgress.map((goal) => (
+                  <div key={goal.goal_id} className="rounded-2xl border border-border bg-muted/20 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-foreground">{goal.title}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {fmtMins(goal.totalMinutes)} total contribution
+                          {goal.todayMinutes > 0 ? ` · ${fmtMins(goal.todayMinutes)} today` : " · nothing logged today"}
+                        </div>
+                      </div>
+                      <div className="text-right text-xs text-muted-foreground">
+                        <div>{goal.sessionsCount} session{goal.sessionsCount === 1 ? "" : "s"}</div>
+                      </div>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-border/60">
+                      <div className="h-full rounded-full bg-primary" style={{ width: `${goal.width}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-border p-5 text-sm text-muted-foreground">
+                No goal-linked sessions yet. Once activities match your goal keywords, they’ll show up here.
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">

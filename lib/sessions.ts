@@ -63,6 +63,11 @@ export interface DailyAnalysis {
   summary: string;
   core_problem: string;
   key_action: string;
+  positives?: string[];
+  problems?: string[];
+  suggestions?: string[];
+  pattern_detected?: string;
+  contribution_levels?: string[];
   created_at: string;
 }
 
@@ -74,6 +79,8 @@ const KEYS = {
   monthly: "lyfopt:monthly",
   analysis: "lyfopt:analysis",
 };
+
+const DAILY_ANALYSIS_CACHE_PREFIX = "lyfopt:analysis-cache:";
 
 const uid = () =>
   globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -239,6 +246,55 @@ export const addMonthlyReview = (r: Omit<MonthlyReview, "id" | "created_at">): M
 
 export const deleteGoal = (id: string) => saveGoals(getGoals().filter((g) => g.id !== id));
 
+// ---------- Daily analysis ----------
+export const getDailyAnalyses = () => read<DailyAnalysis[]>(KEYS.analysis, []);
+
+export const getDailyAnalysisForLog = (logId: string) => getDailyAnalyses().find((analysis) => analysis.log_id === logId) ?? null;
+
+export const saveDailyAnalysis = (
+  analysis: Omit<DailyAnalysis, "id" | "created_at"> & { id?: string; created_at?: string },
+): DailyAnalysis => {
+  const analyses = getDailyAnalyses();
+  const existing = analyses.find((entry) => entry.log_id === analysis.log_id);
+  const nextAnalysis: DailyAnalysis = {
+    ...analysis,
+    id: existing?.id ?? analysis.id ?? uid(),
+    created_at: existing?.created_at ?? analysis.created_at ?? new Date().toISOString(),
+  };
+
+  if (existing) {
+    write(
+      KEYS.analysis,
+      analyses.map((entry) => (entry.log_id === analysis.log_id ? nextAnalysis : entry)),
+    );
+    return nextAnalysis;
+  }
+
+  write(KEYS.analysis, [...analyses, nextAnalysis]);
+  return nextAnalysis;
+};
+
+const getDailyAnalysisCacheKey = (logId: string) => `${DAILY_ANALYSIS_CACHE_PREFIX}${logId}`;
+
+export const getCachedDailyAnalysis = (logId: string): DailyAnalysis | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(getDailyAnalysisCacheKey(logId));
+    return raw ? (JSON.parse(raw) as DailyAnalysis) : null;
+  } catch {
+    return null;
+  }
+};
+
+export const cacheDailyAnalysis = (analysis: DailyAnalysis) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(getDailyAnalysisCacheKey(analysis.log_id), JSON.stringify(analysis));
+  } catch {
+    // Ignore cache write failures.
+  }
+};
+
 // ---------- Matching ----------
 export const matchGoalForTitle = (title: string, goals = getGoals()): Goal | null => {
   const t = title.toLowerCase();
@@ -339,7 +395,7 @@ export const computeStreaks = (logs: DailyLog[]) => {
   // current streak up to today
   let currentUpToToday = 0;
   const today = new Date();
-  let cursor = new Date(today);
+  const cursor = new Date(today);
   while (true) {
     const key = cursor.toISOString().slice(0, 10);
     if (dates.has(key)) {
@@ -623,6 +679,126 @@ export const deleteGoalFromDb = async (id: string) => {
   const profileId = await getAuthedProfileId();
   const { error } = await supabase.from("goals").delete().eq("id", id).eq("profile_id", profileId);
   if (error) throw error;
+};
+
+export const fetchDailyAnalysisForLogFromDb = async (logId: string): Promise<DailyAnalysis | null> => {
+  const cached = getCachedDailyAnalysis(logId);
+  if (cached) return cached;
+
+  const fallback = getDailyAnalysisForLog(logId);
+  if (fallback) {
+    cacheDailyAnalysis(fallback);
+    return fallback;
+  }
+
+  try {
+    const profileId = await getAuthedProfileId();
+    const { data, error } = await supabase
+      .from("daily_analyses")
+      .select(
+        "id, log_id, total_productive_minutes, total_distraction_minutes, total_neutral_minutes, untracked_minutes, goal_contribution_score, efficiency_score, goal_breakdown, summary, core_problem, key_action, positives, problems, suggestions, pattern_detected, contribution_levels, created_at",
+      )
+      .eq("profile_id", profileId)
+      .eq("log_id", logId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return null;
+
+    const analysis: DailyAnalysis = {
+      id: data.id,
+      log_id: data.log_id,
+      total_productive_minutes: data.total_productive_minutes ?? 0,
+      total_distraction_minutes: data.total_distraction_minutes ?? 0,
+      total_neutral_minutes: data.total_neutral_minutes ?? 0,
+      untracked_minutes: data.untracked_minutes ?? 0,
+      goal_contribution_score: data.goal_contribution_score ?? 0,
+      efficiency_score: data.efficiency_score ?? 0,
+      goal_breakdown: Array.isArray(data.goal_breakdown) ? (data.goal_breakdown as DailyAnalysis["goal_breakdown"]) : [],
+      summary: data.summary ?? "",
+      core_problem: data.core_problem ?? "",
+      key_action: data.key_action ?? "",
+      positives: Array.isArray(data.positives) ? (data.positives as string[]) : [],
+      problems: Array.isArray(data.problems) ? (data.problems as string[]) : [],
+      suggestions: Array.isArray(data.suggestions) ? (data.suggestions as string[]) : [],
+      pattern_detected: data.pattern_detected ?? "",
+      contribution_levels: Array.isArray(data.contribution_levels) ? (data.contribution_levels as string[]) : [],
+      created_at: data.created_at,
+    };
+
+    cacheDailyAnalysis(analysis);
+    saveDailyAnalysis(analysis);
+    return analysis;
+  } catch {
+    return null;
+  }
+};
+
+export const saveDailyAnalysisToDb = async (
+  analysis: Omit<DailyAnalysis, "id" | "created_at"> & { id?: string; created_at?: string },
+): Promise<DailyAnalysis> => {
+  const localSaved = saveDailyAnalysis(analysis);
+  cacheDailyAnalysis(localSaved);
+
+  try {
+    const profileId = await getAuthedProfileId();
+    const payload = {
+      profile_id: profileId,
+      log_id: localSaved.log_id,
+      total_productive_minutes: localSaved.total_productive_minutes,
+      total_distraction_minutes: localSaved.total_distraction_minutes,
+      total_neutral_minutes: localSaved.total_neutral_minutes,
+      untracked_minutes: localSaved.untracked_minutes,
+      goal_contribution_score: localSaved.goal_contribution_score,
+      efficiency_score: localSaved.efficiency_score,
+      goal_breakdown: localSaved.goal_breakdown,
+      summary: localSaved.summary,
+      core_problem: localSaved.core_problem,
+      key_action: localSaved.key_action,
+      positives: localSaved.positives ?? [],
+      problems: localSaved.problems ?? [],
+      suggestions: localSaved.suggestions ?? [],
+      pattern_detected: localSaved.pattern_detected ?? "",
+      contribution_levels: localSaved.contribution_levels ?? [],
+    };
+
+    const { data, error } = await supabase
+      .from("daily_analyses")
+      .upsert(payload, { onConflict: "profile_id,log_id" })
+      .select(
+        "id, log_id, total_productive_minutes, total_distraction_minutes, total_neutral_minutes, untracked_minutes, goal_contribution_score, efficiency_score, goal_breakdown, summary, core_problem, key_action, positives, problems, suggestions, pattern_detected, contribution_levels, created_at",
+      )
+      .single();
+
+    if (error) throw error;
+
+    const saved: DailyAnalysis = {
+      id: data.id,
+      log_id: data.log_id,
+      total_productive_minutes: data.total_productive_minutes ?? 0,
+      total_distraction_minutes: data.total_distraction_minutes ?? 0,
+      total_neutral_minutes: data.total_neutral_minutes ?? 0,
+      untracked_minutes: data.untracked_minutes ?? 0,
+      goal_contribution_score: data.goal_contribution_score ?? 0,
+      efficiency_score: data.efficiency_score ?? 0,
+      goal_breakdown: Array.isArray(data.goal_breakdown) ? (data.goal_breakdown as DailyAnalysis["goal_breakdown"]) : [],
+      summary: data.summary ?? "",
+      core_problem: data.core_problem ?? "",
+      key_action: data.key_action ?? "",
+      positives: Array.isArray(data.positives) ? (data.positives as string[]) : [],
+      problems: Array.isArray(data.problems) ? (data.problems as string[]) : [],
+      suggestions: Array.isArray(data.suggestions) ? (data.suggestions as string[]) : [],
+      pattern_detected: data.pattern_detected ?? "",
+      contribution_levels: Array.isArray(data.contribution_levels) ? (data.contribution_levels as string[]) : [],
+      created_at: data.created_at,
+    };
+
+    cacheDailyAnalysis(saved);
+    saveDailyAnalysis(saved);
+    return saved;
+  } catch {
+    return localSaved;
+  }
 };
 
 export interface MonthlyReviewRow {

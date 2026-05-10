@@ -6,6 +6,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "LyfOpt",
   description: "AI life optimizer for clarity, focus, and better days.",
+  icons: {
+    icon: "/favicon/favicon.svg",
+  },
 };
 
 export default function RootLayout({

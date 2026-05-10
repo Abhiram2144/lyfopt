@@ -24,19 +24,23 @@ import {
   computeMetrics,
   deleteSessionFromDb,
   fetchDailyLogByDateFromDb,
+  fetchDailyAnalysisForLogFromDb,
   fetchGoalsFromDb,
   fetchSessionsFromDb,
   fmtMins,
   matchGoalForTitle,
+  saveDailyAnalysisToDb,
   todayDate,
   upsertDailyLogToDb,
   type ActivitySession,
+  type DailyAnalysis,
   type Goal,
   type SessionCategory,
 } from "@/lib/sessions";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { getErrorMessage } from "@/lib/error";
+import type { AnalyzeDayPayload, AnalyzeDayResult } from "@/lib/ai";
 
 const categoryStyles: Record<SessionCategory, { dot: string; ring: string; label: string; icon: typeof Target }> = {
   productive: { dot: "bg-primary", ring: "border-primary/30", label: "Productive", icon: Target },
@@ -53,6 +57,13 @@ const nowTimeValue = () => {
   return `${pad(now.getHours())}:${pad(now.getMinutes())}`;
 };
 
+const DEFAULT_WAKE_TIME = "07:30";
+const DEFAULT_SLEEP_TIME = "23:30";
+const DEFAULT_ENERGY_LEVEL: 1 | 2 | 3 | 4 | 5 = 3;
+const DEFAULT_FOCUS_LEVEL: 1 | 2 | 3 | 4 | 5 = 3;
+const DEFAULT_MOOD: "low" | "neutral" | "good" = "neutral";
+const DEFAULT_DAY_RATING: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 = 7;
+
 const addMinutesToTime = (time: string, minutes: number) => {
   const [hours, mins] = time.split(":").map(Number);
   const next = new Date();
@@ -64,13 +75,13 @@ const DailyLog = () => {
   const router = useRouter();
   const { user, loading } = useAuth();
   const date = todayDate();
-  const [wake, setWake] = useState("07:30");
-  const [sleep, setSleep] = useState("23:30");
+  const [wake, setWake] = useState(DEFAULT_WAKE_TIME);
+  const [sleep, setSleep] = useState(DEFAULT_SLEEP_TIME);
   const [logId, setLogId] = useState<string>("");
-  const [energy, setEnergy] = useState<1 | 2 | 3 | 4 | 5>(3);
-  const [focus, setFocus] = useState<1 | 2 | 3 | 4 | 5>(3);
-  const [mood, setMood] = useState<"low" | "neutral" | "good">("neutral");
-  const [dayRating, setDayRating] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10>(7);
+  const [energy, setEnergy] = useState<1 | 2 | 3 | 4 | 5>(DEFAULT_ENERGY_LEVEL);
+  const [focus, setFocus] = useState<1 | 2 | 3 | 4 | 5>(DEFAULT_FOCUS_LEVEL);
+  const [mood, setMood] = useState<"low" | "neutral" | "good">(DEFAULT_MOOD);
+  const [dayRating, setDayRating] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10>(DEFAULT_DAY_RATING);
 
   // Session draft
   const [title, setTitle] = useState("");
@@ -81,6 +92,7 @@ const DailyLog = () => {
 
   const [sessions, setSessions] = useState<ActivitySession[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [existingAnalysis, setExistingAnalysis] = useState<DailyAnalysis | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -94,12 +106,12 @@ const DailyLog = () => {
         const [loadedGoals, existingLog] = await Promise.all([fetchGoalsFromDb(), fetchDailyLogByDateFromDb(date)]);
         const log = existingLog ?? (await upsertDailyLogToDb({
           date,
-          wake_time: wake,
-          sleep_time: sleep,
-          energy_level: energy,
-          focus_level: focus,
-          mood,
-          day_rating: dayRating,
+          wake_time: DEFAULT_WAKE_TIME,
+          sleep_time: DEFAULT_SLEEP_TIME,
+          energy_level: DEFAULT_ENERGY_LEVEL,
+          focus_level: DEFAULT_FOCUS_LEVEL,
+          mood: DEFAULT_MOOD,
+          day_rating: DEFAULT_DAY_RATING,
         }));
         const loadedSessions = await fetchSessionsFromDb(log.id);
 
@@ -113,6 +125,7 @@ const DailyLog = () => {
         setMood(log.mood);
         setDayRating(log.day_rating);
         setSessions(loadedSessions);
+        setExistingAnalysis(await fetchDailyAnalysisForLogFromDb(log.id));
       } catch (error) {
         if (!active) return;
         setLoadError(getErrorMessage(error));
@@ -224,9 +237,68 @@ const DailyLog = () => {
   };
 
   const runAnalysis = () => {
+    if (!logId || sessions.length === 0) return;
+
+    if (existingAnalysis) {
+      router.push("/app");
+      return;
+    }
+
     setSubmitting(true);
-    sessionStorage.setItem("lyfopt:analyze:logId", logId);
-    setTimeout(() => router.push("/app?debugAi=1"), 500);
+
+    const payload: AnalyzeDayPayload = {
+      sessions,
+      goals,
+      dailyLog: {
+        wake_time: wake,
+        sleep_time: sleep,
+        energy_level: energy,
+        focus_level: focus,
+        mood,
+        day_rating: dayRating,
+      },
+    };
+
+    void fetch("/api/analyze-day", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then(async (response) => {
+        const body = (await response.json()) as AnalyzeDayResult | { error?: string };
+        if (!response.ok || !("summary" in body)) {
+          throw new Error("error" in body && body.error ? body.error : "Unable to analyze the day.");
+        }
+
+        const saved = await saveDailyAnalysisToDb({
+          log_id: logId,
+          total_productive_minutes: metrics?.productive ?? 0,
+          total_distraction_minutes: metrics?.distraction ?? 0,
+          total_neutral_minutes: metrics?.neutral ?? 0,
+          untracked_minutes: metrics?.untracked ?? 0,
+          goal_contribution_score: metrics?.goalScore ?? 0,
+          efficiency_score: metrics?.efficiencyScore ?? 0,
+          goal_breakdown: metrics?.goalBreakdown ?? [],
+          summary: body.summary,
+          core_problem: body.core_problem,
+          key_action: body.key_action,
+          positives: body.positives,
+          problems: body.problems,
+          suggestions: body.suggestions,
+          pattern_detected: body.pattern_detected,
+          contribution_levels: body.contribution_levels,
+        });
+
+        setExistingAnalysis(saved);
+        toast.success("Today’s analysis is ready.");
+        router.push("/app");
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error));
+      })
+      .finally(() => {
+        setSubmitting(false);
+      });
   };
 
   return (
@@ -415,7 +487,7 @@ const DailyLog = () => {
           disabled={submitting || sessions.length === 0}
         >
           <Sparkles className="h-4 w-4" />
-          {submitting ? "Updating dashboard..." : "Refresh dashboard"}
+          {submitting ? "Generating today’s analysis..." : existingAnalysis ? "Open dashboard" : "Generate today’s analysis"}
         </Button>
       </div>
     </>

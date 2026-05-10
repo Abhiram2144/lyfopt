@@ -8,6 +8,8 @@ import { Menu, X, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/site/AuthProvider";
 import { useRouter } from "next/navigation";
+import LyfOpt from "../../public/LyfOpt.png";
+import Image from "next/image";
 
 const links = [
   { to: "/", label: "Home" },
@@ -47,8 +49,8 @@ export const Navbar = () => {
     >
       <nav className="container flex h-16 items-center justify-between">
         <Link href="/" className="flex items-center gap-2 font-display font-semibold tracking-tight">
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary shadow-glow">
-            <Sparkles className="h-4 w-4 text-primary-foreground" />
+          <span className="grid h-8 w-8 place-items-center rounded-lg shadow-glow">
+            <Image src="/LyfOpt.png" alt="LyfOpt" width={30} height={30} />
           </span>
           <span className="text-base">LyfOpt</span>
         </Link>
