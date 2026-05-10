@@ -3,10 +3,10 @@
 import { ReactNode, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppSidebar } from "./AppSidebar";
-import { loadProfileFromDatabase } from "@/lib/onboarding";
+import { hasCompletedOnboarding } from "@/lib/onboarding";
 import { useAuth } from "@/components/site/AuthProvider";
 import { Button } from "@/components/ui/button";
-import { LogOut } from "lucide-react";
+import { Loader2, LogOut } from "lucide-react";
 
 export const AppLayout = ({ children, title }: { children: ReactNode; title?: string }) => {
   const router = useRouter();
@@ -23,8 +23,8 @@ export const AppLayout = ({ children, title }: { children: ReactNode; title?: st
 
     const load = async () => {
       const userId = session.user.id;
-      const profile = await loadProfileFromDatabase(userId);
-      if (!profile || !profile.completed_at) {
+      const completed = await hasCompletedOnboarding(userId);
+      if (!completed) {
         router.replace("/onboarding");
         return;
       }
@@ -40,7 +40,16 @@ export const AppLayout = ({ children, title }: { children: ReactNode; title?: st
     router.replace("/");
   };
 
-  if (!ready) return null;
+  if (!ready) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-background">
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Preparing your command center...
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex w-full bg-background overflow-x-hidden">

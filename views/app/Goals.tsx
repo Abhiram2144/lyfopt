@@ -1,36 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useAuth } from "@/components/site/AuthProvider";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { BrainCircuit, Sparkles, Trash2 } from "lucide-react";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Plus, Target, Trash2 } from "lucide-react";
-import { addGoalToDb, deleteGoalFromDb, fetchGoalsFromDb, type Goal, type GoalPriority, type GoalTimeHorizon } from "@/lib/sessions";
+  addGoalToDb,
+  deleteGoalFromDb,
+  fetchGoalsFromDb,
+  type Goal,
+} from "@/lib/sessions";
+import { inferGoalDraft } from "@/lib/utils";
 import { toast } from "sonner";
 import { getErrorMessage } from "@/lib/error";
 
 const Goals = () => {
   const { user, loading } = useAuth();
   const [goals, setGoals] = useState<Goal[]>([]);
-  const [title, setTitle] = useState("");
-  const [category, setCategory] = useState("study");
-  const [type, setType] = useState<"short_term" | "long_term">("long_term");
-  const [priority, setPriority] = useState<GoalPriority>("medium");
-  const [timeHorizon, setTimeHorizon] = useState<GoalTimeHorizon>("weekly");
-  const [identityTag, setIdentityTag] = useState("I am someone who shows up");
-  const [keywords, setKeywords] = useState("");
-  const [openEnded, setOpenEnded] = useState(true);
-  const [targetValue, setTargetValue] = useState<string>("");
-  const [targetUnit, setTargetUnit] = useState<string>("times/week");
+  const [prompt, setPrompt] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,7 +28,7 @@ const Goals = () => {
       if (loading || !user) return;
       try {
         const rows = await fetchGoalsFromDb();
-        if (active) setGoals(rows);
+        if (active) setGoals(rows.filter((goal) => goal.is_active));
       } catch (error) {
         if (active) {
           setGoals([]);
@@ -53,25 +42,25 @@ const Goals = () => {
     };
   }, [loading, user]);
 
+  const draft = useMemo(() => inferGoalDraft(prompt), [prompt]);
+
   const create = async () => {
-    if (!title.trim()) return;
+    if (!prompt.trim()) return;
     try {
       await addGoalToDb({
-        title: title.trim(),
-        category,
-        type,
-        priority,
-        time_horizon: timeHorizon,
-        identity_tag: identityTag.trim(),
-        open_ended: openEnded,
-        target_value: targetValue ? Number(targetValue) : null,
-        target_unit: targetUnit || null,
-        keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
+        title: draft.title,
+        category: draft.category,
+        type: draft.type,
+        priority: draft.priority,
+        time_horizon: draft.timeHorizon,
+        identity_tag: draft.identityTag,
+        open_ended: draft.openEnded,
+        target_value: null,
+        target_unit: null,
+        keywords: draft.keywords,
       });
       setGoals(await fetchGoalsFromDb());
-      setTitle("");
-      setKeywords("");
-      setTargetValue("");
+      setPrompt("");
     } catch (error) {
       toast.error(getErrorMessage(error));
     }
@@ -87,158 +76,108 @@ const Goals = () => {
   };
 
   return (
-    <>
-      <div className="px-4 md:px-8 py-6 md:py-10 max-w-4xl mx-auto space-y-6">
-        {loadError && (
-          <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
-            {loadError}
+    <div className="px-4 md:px-8 py-6 md:py-10 max-w-5xl mx-auto space-y-8">
+      {loadError && (
+        <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-foreground">
+          {loadError}
+        </div>
+      )}
+
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-3">
+        <div className="text-xs uppercase tracking-[0.28em] text-muted-foreground">Identity</div>
+        <h1 className="max-w-3xl font-display text-3xl md:text-5xl font-semibold tracking-tight text-foreground">
+          Define what you are trying to become, not what dropdowns can describe.
+        </h1>
+        <p className="max-w-2xl text-sm md:text-base text-muted-foreground">
+          Write the goal naturally. LyfOpt infers the tracking language, keywords, and identity frame behind it.
+        </p>
+      </motion.div>
+
+      <section className="rounded-[28px] border border-border bg-card p-6 md:p-8 space-y-5 shadow-sm">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <BrainCircuit className="h-4 w-4 text-primary" />
+          AI-assisted goal framing
+        </div>
+        <Textarea
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+          placeholder="Become a stronger football player who trains consistently under pressure"
+          className="min-h-28 border-border bg-background text-base leading-relaxed"
+        />
+        <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
+          <div className="rounded-2xl border border-primary/20 bg-primary/5 p-5">
+            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Identity</div>
+            <div className="mt-2 text-lg font-medium text-foreground">{draft.title || "Your goal will appear here"}</div>
+            <p className="mt-2 text-sm text-muted-foreground">{draft.identityTag}</p>
+          </div>
+          <div className="rounded-2xl border border-border bg-background p-5">
+            <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Inferred signals</div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {draft.keywords.map((keyword) => (
+                <span key={keyword} className="rounded-full border border-border px-3 py-1 text-xs text-foreground">
+                  {keyword}
+                </span>
+              ))}
+            </div>
+            <div className="mt-3 text-xs text-muted-foreground">
+              {draft.priority} priority · {draft.timeHorizon} rhythm · {draft.category}
+            </div>
+          </div>
+        </div>
+        <Button onClick={() => void create()} variant="hero" size="lg" disabled={!prompt.trim()}>
+          <Sparkles className="h-4 w-4" />
+          Create goal
+        </Button>
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <div className="text-xs uppercase tracking-[0.28em] text-muted-foreground">Active goals</div>
+          <h2 className="mt-2 font-display text-2xl font-semibold tracking-tight">Your identity stack</h2>
+        </div>
+
+        {goals.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border p-8 text-sm text-muted-foreground">
+            No goals yet. Start with one clear identity-level goal and let the system build around it.
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {goals.map((goal) => (
+              <div key={goal.id} className="rounded-[24px] border border-border bg-card p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">{goal.category}</div>
+                    <div className="mt-2 text-xl font-medium text-foreground">{goal.title}</div>
+                    <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                      {goal.identity_tag || "A clearer identity statement will appear here once this goal is refined."}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => void remove(goal.id)}
+                    className="text-muted-foreground transition-colors hover:text-destructive"
+                    aria-label="Delete goal"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {goal.keywords.map((keyword) => (
+                    <span key={keyword} className="rounded-full border border-border px-3 py-1 text-xs text-foreground/85">
+                      {keyword}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-5 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{goal.priority} priority</span>
+                  <span>{goal.time_horizon}</span>
+                </div>
+              </div>
+            ))}
           </div>
         )}
-
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-          <h1 className="font-display text-2xl md:text-3xl font-semibold tracking-tight">Goals</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Define what matters. Sessions matching these keywords count toward your goal score.
-          </p>
-        </motion.div>
-
-        <div className="rounded-2xl border border-border bg-card p-5 md:p-6 space-y-4">
-          <p className="text-xs text-muted-foreground">
-            Example: a high-priority weekly goal with a clear identity tag tends to drive better follow-through.
-          </p>
-          <div className="grid md:grid-cols-12 gap-3">
-            <div className="md:col-span-5 space-y-2">
-              <Label className="text-xs">Goal title</Label>
-              <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Get better at football"
-                className="bg-background border-border h-10"
-              />
-            </div>
-            <div className="md:col-span-3 space-y-2">
-              <Label className="text-xs">Category</Label>
-              <Input
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="football"
-                className="bg-background border-border h-10"
-              />
-            </div>
-            <div className="md:col-span-2 space-y-2">
-              <Label className="text-xs">Type</Label>
-              <Select value={type} onValueChange={(v) => setType(v as "short_term" | "long_term")}>
-                <SelectTrigger className="bg-background border-border h-10">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="short_term">Short term</SelectItem>
-                  <SelectItem value="long_term">Long term</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="md:col-span-2 space-y-2">
-              <Label className="text-xs">Priority</Label>
-              <Select value={priority} onValueChange={(v) => setPriority(v as GoalPriority)}>
-                <SelectTrigger className="bg-background border-border h-10">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="md:col-span-3 space-y-2">
-              <Label className="text-xs">Time horizon</Label>
-              <Select value={timeHorizon} onValueChange={(v) => setTimeHorizon(v as GoalTimeHorizon)}>
-                <SelectTrigger className="bg-background border-border h-10">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="daily">Daily</SelectItem>
-                  <SelectItem value="weekly">Weekly</SelectItem>
-                  <SelectItem value="long-term">Long term</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="md:col-span-3 space-y-2">
-              <Label className="text-xs">Identity tag</Label>
-              <Input
-                value={identityTag}
-                onChange={(e) => setIdentityTag(e.target.value)}
-                placeholder="I am someone who..."
-                className="bg-background border-border h-10"
-              />
-            </div>
-            <div className="md:col-span-12 flex items-center gap-2">
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={openEnded} onChange={(e) => setOpenEnded(e.target.checked)} />
-                <span className="text-sm">Open-ended goal</span>
-              </label>
-            </div>
-            <div className="md:col-span-2 flex items-end">
-              <Button onClick={() => void create()} variant="hero" className="w-full h-10" disabled={!title.trim()}>
-                <Plus className="h-4 w-4" /> Add
-              </Button>
-            </div>
-            <div className="md:col-span-12 space-y-2">
-              <Label className="text-xs">Keywords (comma separated)</Label>
-              <Input
-                value={keywords}
-                onChange={(e) => setKeywords(e.target.value)}
-                placeholder="football, training, soccer"
-                className="bg-background border-border h-10"
-              />
-            </div>
-            {!openEnded && (
-              <div className="md:col-span-12 grid md:grid-cols-3 gap-3 mt-2">
-                <div className="space-y-2">
-                  <Label className="text-xs">Target value</Label>
-                  <Input value={targetValue} onChange={(e) => setTargetValue(e.target.value)} placeholder="15" className="h-10" />
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label className="text-xs">Unit</Label>
-                  <Input value={targetUnit} onChange={(e) => setTargetUnit(e.target.value)} placeholder="km/week or times/week" className="h-10" />
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          {goals.length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-8">No goals yet.</p>
-          )}
-          {goals.map((g) => (
-            <div
-              key={g.id}
-              className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3"
-            >
-              <div className="grid h-9 w-9 place-items-center rounded-lg bg-primary/10 border border-primary/30">
-                <Target className="h-4 w-4 text-primary" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-foreground">{g.title}</div>
-                <div className="text-[11px] text-muted-foreground">
-                  {g.priority} priority · {g.time_horizon} · {g.identity_tag} · {g.open_ended ? "Open-ended" : `${g.target_value ?? "—"} ${g.target_unit ?? ""}`} · keywords: {g.keywords.join(", ") || "—"}
-                </div>
-              </div>
-              <button
-                onClick={() => void remove(g.id)}
-                className="text-muted-foreground hover:text-destructive transition-colors"
-                aria-label="Delete goal"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
+      </section>
+    </div>
   );
 };
 
 export default Goals;
-

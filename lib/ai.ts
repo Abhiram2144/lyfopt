@@ -71,17 +71,6 @@ export interface TemporalPatterns {
     lateNightActivity: boolean;
 }
 
-const OUTPUT_KEYS = [
-    "summary",
-    "core_problem",
-    "key_action",
-    "positives",
-    "problems",
-    "suggestions",
-    "pattern_detected",
-    "contribution_levels",
-] as const;
-
 const sanitizeText = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
 const cleanArray = (value: unknown) => (Array.isArray(value) ? value.map((item) => sanitizeText(item)).filter(Boolean) : []);
@@ -510,7 +499,7 @@ const ruleBasedOutcome = (payload: AnalyzeDayPayload): AnalyzeDayResult => {
     };
 };
 
-const buildContext = (payload: AnalyzeDayPayload) => {
+export const buildContext = (payload: AnalyzeDayPayload) => {
     // Compute metrics using the same logic as fallback
     const referenceLog: DailyLog = {
         id: "analysis-context",

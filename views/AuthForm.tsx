@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/components/site/AuthProvider";
-import { loadProfileFromDatabase } from "@/lib/onboarding";
+import { hasCompletedOnboarding } from "@/lib/onboarding";
 import { motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 import Link from "next/link";
@@ -72,7 +72,7 @@ const AuthForm = ({ mode }: Props) => {
   const [loading, setLoading] = useState(false);
 
   const authCallbackUrl = () => {
-    const next = encodeURIComponent("/onboarding");
+    const next = encodeURIComponent(isSignup ? "/onboarding" : "/app");
     if (typeof window === "undefined") {
       return `/auth/callback?next=${next}`;
     }
@@ -83,8 +83,7 @@ const AuthForm = ({ mode }: Props) => {
   const nextPath = async (userId?: string) => {
     if (!userId) return "/onboarding";
     try {
-      const dbProfile = await loadProfileFromDatabase(userId);
-      return dbProfile?.completed_at ? "/app" : "/onboarding";
+      return (await hasCompletedOnboarding(userId)) ? "/app" : "/onboarding";
     } catch {
       return "/onboarding";
     }

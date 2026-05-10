@@ -83,6 +83,11 @@ export const loadProfileFromDatabase = async (userId: string): Promise<Onboardin
   return profile;
 };
 
+export const hasCompletedOnboarding = async (userId: string): Promise<boolean> => {
+  const profile = await loadProfileFromDatabase(userId);
+  return Boolean(profile?.completed_at);
+};
+
 export const saveProfileToDatabase = async (userId: string, profile: OnboardingProfile) => {
   const { error: profileError } = await supabase
     .from("profiles")

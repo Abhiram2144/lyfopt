@@ -1,6 +1,4 @@
-import type { DbHistoryEntry } from "@/lib/sessions";
-
-export type DayEntry = Pick<DbHistoryEntry, "date" | "sleep" | "focus" | "distraction" | "energy" | "score" | "summary">;
+import type { DayEntry } from "@/lib/sessions";
 
 export const generateHistory = (entries: DayEntry[] = []): DayEntry[] => entries;
 

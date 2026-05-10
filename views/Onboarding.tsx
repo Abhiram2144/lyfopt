@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   emptyProfile,
   failureLabel,
   feedbackLabel,
+  hasCompletedOnboarding,
   saveProfileToDatabase,
   type BaselineType,
   type FailurePattern,
@@ -104,6 +105,21 @@ const Onboarding = () => {
   const [profile, setProfile] = useState<OnboardingProfile>(emptyProfile());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!session?.user) return;
+
+    hasCompletedOnboarding(session.user.id)
+      .then((completed) => {
+        if (completed) {
+          router.replace("/app");
+        }
+      })
+      .catch(() => {
+        // keep user on onboarding if the check fails
+      });
+  }, [authLoading, router, session]);
 
   const canNext = (() => {
     if (step === 1) return !!profile.baseline_type;
@@ -294,7 +310,7 @@ const Onboarding = () => {
                 </div>
                 <div className="mt-10 rounded-2xl border border-primary/30 bg-card p-6 md:p-8 shadow-glow">
                   <p className="text-base md:text-lg leading-relaxed">
-                    You're currently{" "}
+                    You&apos;re currently{" "}
                     <span className="text-primary font-medium">
                       {profile.baseline_type ? baselineLabel[profile.baseline_type] : "—"}
                     </span>
@@ -308,7 +324,7 @@ const Onboarding = () => {
                     <span className="text-primary font-medium">
                       {profile.feedback_style ? feedbackLabel[profile.feedback_style] : "—"}
                     </span>
-                    . Today you're feeling{" "}
+                    . Today you&apos;re feeling{" "}
                     <span className="text-primary font-medium">
                       {profile.mood_level
                         ? moodOptions.find((m) => m.value === profile.mood_level)?.title.toLowerCase()

@@ -1,19 +1,19 @@
 "use client";
 
+import { Suspense, useEffect, useState } from "react";
 import { Layout } from "@/components/site/Layout";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
 import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
 
 const normalizeNextPath = (value: string | null) => {
   if (!value || !value.startsWith("/")) return "/onboarding";
   return value;
 };
 
-export default function AuthCallbackPage() {
+function AuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [message, setMessage] = useState("Completing sign-in...");
@@ -89,5 +89,13 @@ export default function AuthCallbackPage() {
         </div>
       </div>
     </Layout>
+  );
+}
+
+export default function AuthCallbackPage() {
+  return (
+    <Suspense fallback={null}>
+      <AuthCallbackContent />
+    </Suspense>
   );
 }

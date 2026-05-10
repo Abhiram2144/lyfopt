@@ -1,5 +1,5 @@
-import History from "@/views/app/History";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <History />;
+  redirect("/app/patterns");
 }

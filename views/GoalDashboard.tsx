@@ -19,10 +19,10 @@ import {
   matchGoalForTitle,
   todayDate,
   type ActivitySession,
+  type DailyAnalysis,
   type DailyLog,
   type Goal,
 } from "@/lib/sessions";
-import type { AnalyzeDayResult } from "@/lib/ai";
 
 const fadeUp = {
   initial: { opacity: 0, y: 12 },
@@ -47,7 +47,7 @@ export default function GoalDashboard() {
   const [sessions, setSessions] = useState<ActivitySession[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [aiInsight, setAiInsight] = useState<AnalyzeDayResult | null>(null);
+  const [aiInsight, setAiInsight] = useState<DailyAnalysis | null>(null);
 
   useEffect(() => {
     let active = true;

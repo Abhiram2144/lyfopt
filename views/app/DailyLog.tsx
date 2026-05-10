@@ -37,7 +37,7 @@ import {
   type Goal,
   type SessionCategory,
 } from "@/lib/sessions";
-import { cn } from "@/lib/utils";
+import { cn, parseSessionCapture } from "@/lib/utils";
 import { toast } from "sonner";
 import { getErrorMessage } from "@/lib/error";
 import type { AnalyzeDayPayload, AnalyzeDayResult } from "@/lib/ai";
@@ -84,11 +84,8 @@ const DailyLog = () => {
   const [dayRating, setDayRating] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10>(DEFAULT_DAY_RATING);
 
   // Session draft
-  const [title, setTitle] = useState("");
+  const [captureInput, setCaptureInput] = useState("");
   const [start, setStart] = useState(nowTimeValue());
-  const [end, setEnd] = useState(addMinutesToTime(nowTimeValue(), 60));
-  const [intentional, setIntentional] = useState(true);
-  const [difficulty, setDifficulty] = useState<1 | 2 | 3 | 4 | 5>(3);
 
   const [sessions, setSessions] = useState<ActivitySession[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -155,29 +152,36 @@ const DailyLog = () => {
     });
   }, [wake, sleep, logId, date, energy, focus, mood, dayRating]);
 
-  const matched = useMemo(() => (title.trim() ? matchGoalForTitle(title, goals) : null), [title, goals]);
+  const capturePreview = useMemo(
+    () => (captureInput.trim() ? parseSessionCapture(captureInput, start) : null),
+    [captureInput, start],
+  );
+  const matched = useMemo(
+    () => (capturePreview?.title ? matchGoalForTitle(capturePreview.title, goals) : null),
+    [capturePreview, goals],
+  );
 
   const addOne = () => {
-    if (!title.trim() || !logId) return;
-    const startIso = toIso(date, start);
-    let endIso = toIso(date, end);
+    if (!capturePreview || !logId) return;
+    const startIso = toIso(date, capturePreview.start);
+    let endIso = toIso(date, capturePreview.end);
     if (new Date(endIso) <= new Date(startIso)) {
       // assume crosses midnight
       const next = new Date(date);
       next.setDate(next.getDate() + 1);
-      endIso = new Date(`${next.toISOString().slice(0, 10)}T${end}:00`).toISOString();
+      endIso = new Date(`${next.toISOString().slice(0, 10)}T${capturePreview.end}:00`).toISOString();
     }
     void addSessionToDb({
       log_id: logId,
-      title: title.trim(),
-      intentional,
-      difficulty,
+      title: capturePreview.title.trim(),
+      intentional: true,
+      difficulty: 3,
       start_time: startIso,
       end_time: endIso,
     })
       .then(async () => {
         setSessions(await fetchSessionsFromDb(logId));
-        setTitle("");
+        setCaptureInput("");
       })
       .catch((error) => {
         toast.error(getErrorMessage(error));
@@ -345,7 +349,7 @@ const DailyLog = () => {
         <div className="rounded-2xl border border-border bg-card p-5 md:p-6">
           <div className="flex items-center gap-2 mb-4">
             <Plus className="h-4 w-4 text-primary" />
-            <h2 className="font-display text-base font-medium">Add session</h2>
+            <h2 className="font-display text-base font-medium">Capture a block</h2>
           </div>
 
           <div className="flex flex-wrap gap-2 mb-4">
@@ -368,11 +372,11 @@ const DailyLog = () => {
 
           <div className="grid md:grid-cols-12 gap-3">
             <div className="md:col-span-4 space-y-2">
-              <Label className="text-xs">Activity</Label>
+              <Label className="text-xs">Natural language capture</Label>
               <Input
                 placeholder="library, football, gaming…"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                value={captureInput}
+                onChange={(e) => setCaptureInput(e.target.value)}
                 className="bg-background border-border h-10"
               />
               {matched && (
@@ -382,28 +386,17 @@ const DailyLog = () => {
               )}
             </div>
             <div className="md:col-span-2 space-y-2">
-              <Label className="text-xs">Start</Label>
+              <Label className="text-xs">Fallback start</Label>
               <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="bg-background border-border h-10" />
             </div>
-            <div className="md:col-span-2 space-y-2">
-              <Label className="text-xs">End</Label>
-              <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="bg-background border-border h-10" />
-            </div>
-            <div className="md:col-span-2 space-y-2">
-              <Label className="text-xs">Intentional</Label>
-              <div className="flex h-10 items-center rounded-md border border-border bg-background px-3">
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={intentional} onChange={(e) => setIntentional(e.target.checked)} />
-                  Deliberate session
-                </label>
+            <div className="md:col-span-4 rounded-xl border border-border bg-background px-4 py-3">
+              <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Interpreted</div>
+              <div className="mt-2 text-sm text-foreground">
+                {capturePreview ? `${capturePreview.title} · ${capturePreview.start} to ${capturePreview.end}` : "Write naturally. LyfOpt will infer the session."}
               </div>
             </div>
-            <div className="md:col-span-2 space-y-2">
-              <Label className="text-xs">Difficulty</Label>
-              <Input type="number" min={1} max={5} value={difficulty} onChange={(e) => setDifficulty(Number(e.target.value) as 1 | 2 | 3 | 4 | 5)} className="bg-background border-border h-10" />
-            </div>
             <div className="md:col-span-2 flex items-end">
-              <Button onClick={addOne} variant="hero" className="w-full h-10" disabled={!title.trim()}>
+              <Button onClick={addOne} variant="hero" className="w-full h-10" disabled={!capturePreview}>
                 <Plus className="h-4 w-4" /> Add
               </Button>
             </div>

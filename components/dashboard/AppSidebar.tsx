@@ -4,11 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BrainCircuit,
+  CalendarRange,
   LayoutDashboard,
   PenLine,
-  Lightbulb,
-  History,
-  FileBarChart,
   Settings,
   Sparkles,
   Target,
@@ -16,13 +15,11 @@ import {
 import { cn } from "@/lib/utils";
 
 const items = [
-  { title: "Dashboard", url: "/app", icon: LayoutDashboard, end: true },
-  { title: "Daily Log", url: "/app/log", icon: PenLine },
+  { title: "Today", url: "/app", icon: LayoutDashboard, end: true },
+  { title: "Capture", url: "/app/log", icon: PenLine },
   { title: "Goals", url: "/app/goals", icon: Target },
-  { title: "Insights", url: "/app/insights", icon: Lightbulb },
-  { title: "History", url: "/app/history", icon: History },
-  { title: "Monthly", url: "/app/monthly", icon: FileBarChart },
-  { title: "Reports", url: "/app/reports", icon: FileBarChart },
+  { title: "Patterns", url: "/app/patterns", icon: BrainCircuit },
+  { title: "Reflection", url: "/app/reflection", icon: CalendarRange },
   { title: "Settings", url: "/app/settings", icon: Settings },
 ];
 

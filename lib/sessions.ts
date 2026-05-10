@@ -71,6 +71,16 @@ export interface DailyAnalysis {
   created_at: string;
 }
 
+export interface DayEntry {
+  date: string;
+  sleep: number;
+  focus: number;
+  distraction: number;
+  energy: number;
+  score: number;
+  summary: string;
+}
+
 const KEYS = {
   logs: "lyfopt:logs",
   sessions: "lyfopt:sessions",
@@ -382,9 +392,9 @@ export const computeStreaks = (logs: DailyLog[]) => {
     if (!lastDate) {
       current = 1;
     } else {
-      const prev = new Date(lastDate);
+      const prev: Date = new Date(lastDate);
       prev.setDate(prev.getDate() + 1);
-      const expected = prev.toISOString().slice(0, 10);
+      const expected: string = prev.toISOString().slice(0, 10);
       if (d === expected) current += 1;
       else current = 1;
     }

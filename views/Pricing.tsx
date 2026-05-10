@@ -12,42 +12,33 @@ const tiers = [
     name: "Free",
     price: "$0",
     cadence: "forever",
-    desc: "Try the core alignment tracker. See the value before you pay.",
+    desc: "Understand where your days are actually going.",
     features: [
-      "3 AI analyses per week",
-      "Basic feedback",
+      "Daily goal tracking",
+      "Session logging",
+      "Goal alignment score",
       "7-day history",
+      "Basic AI insights",
     ],
-    cta: "Start free",
+    cta: "Start tracking",
     highlight: false,
   },
   {
     name: "Pro",
-    price: "$9",
+    price: "$8",
     cadence: "/ month",
-    desc: "For people serious about fixing what's slowing them down.",
+    desc: "For people serious about becoming consistent toward their goals.",
     features: [
-      "Unlimited analyses",
-      "Full insights & root-cause detection",
-      "Weekly summary",
-      "Unlimited history",
+      "Unlimited tracking history",
+      "Advanced goal contribution analysis",
+      "Weekly pattern reviews",
+      "Long-term progress tracking",
+      "AI-powered behavior insights",
+      "Goal momentum tracking",
+      "Monthly reflections",
     ],
-    cta: "Get Pro",
+    cta: "Unlock Pro",
     highlight: true,
-  },
-  {
-    name: "Premium",
-    price: "$24",
-    cadence: "/ month",
-    desc: "Maximum depth. For builders, athletes, and high-output work.",
-    features: [
-      "Everything in Pro",
-      "Goal-based feedback",
-      "Weekly contribution summary",
-      "Long-horizon progress view",
-    ],
-    cta: "Get Premium",
-    highlight: false,
   },
 ];
 
@@ -59,17 +50,17 @@ const Pricing = () => (
         <Reveal>
           <span className="text-xs uppercase tracking-widest text-primary">Pricing</span>
           <h1 className="mt-4 font-display text-4xl md:text-6xl font-bold text-gradient">
-            Simple. Honest. No tricks.
+            Stop guessing if you're improving.
           </h1>
           <p className="mt-5 text-muted-foreground max-w-xl mx-auto">
-            Start free. Upgrade when LyfOpt is genuinely making your weeks better.
+            See where your time went and whether it truly moved you forward.
           </p>
         </Reveal>
       </div>
     </section>
 
     <section className="container pb-24">
-      <div className="grid md:grid-cols-3 gap-5 max-w-6xl mx-auto">
+      <div className="grid md:grid-cols-2 gap-5 max-w-4xl mx-auto">
         {tiers.map((t, i) => (
           <Reveal key={t.name} delay={i * 0.08}>
             <div

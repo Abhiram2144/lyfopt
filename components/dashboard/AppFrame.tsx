@@ -6,14 +6,16 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AppLayout } from "./AppLayout";
 
 const titles: Record<string, string> = {
-  "/app": "Dashboard",
-  "/app/log": "Daily log",
-  "/app/analysis": "Dashboard",
+  "/app": "Today",
+  "/app/log": "Capture",
+  "/app/analysis": "Today",
   "/app/goals": "Goals",
-  "/app/insights": "Insights",
-  "/app/history": "History",
-  "/app/monthly": "Monthly review",
-  "/app/reports": "Reports",
+  "/app/patterns": "Patterns",
+  "/app/insights": "Patterns",
+  "/app/history": "Patterns",
+  "/app/monthly": "Reflection",
+  "/app/reflection": "Reflection",
+  "/app/reports": "Patterns",
   "/app/settings": "Settings",
 };
 

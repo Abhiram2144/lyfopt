@@ -1,5 +1,5 @@
-import Reports from "@/views/app/Reports";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <Reports />;
+  redirect("/app/patterns");
 }

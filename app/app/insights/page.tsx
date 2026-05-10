@@ -1,5 +1,5 @@
-import Insights from "@/views/app/Insights";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return <Insights />;
+  redirect("/app/patterns");
 }
