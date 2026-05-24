@@ -64,7 +64,7 @@ const AuthShell = ({
 const AuthForm = ({ mode }: Props) => {
   const isSignup = mode === "signup";
   const router = useRouter();
-  const { loading: authLoading, session, signInWithGoogle, signInWithPassword, signUpWithPassword } = useAuth();
+  const { loading: authLoading, session, siteOrigin, signInWithGoogle, signInWithPassword, signUpWithPassword } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -98,7 +98,7 @@ const AuthForm = ({ mode }: Props) => {
         email,
         password,
         name,
-        redirectTo: getAuthCallbackUrl("/onboarding"),
+        redirectTo: getAuthCallbackUrl("/onboarding", siteOrigin),
       });
 
       setLoading(false);
@@ -127,7 +127,7 @@ const AuthForm = ({ mode }: Props) => {
     setMessage("");
     setLoading(true);
 
-    const { error } = await signInWithGoogle(getAuthCallbackUrl(isSignup ? "/onboarding" : "/app"));
+    const { error } = await signInWithGoogle(getAuthCallbackUrl(isSignup ? "/onboarding" : "/app", siteOrigin));
 
     setLoading(false);
     if (error) {

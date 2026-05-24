@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Providers } from "@/components/site/Providers";
+import { getConfiguredSiteOrigin } from "@/lib/site";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,10 +17,12 @@ export default function RootLayout({
 }: Readonly<{
   children: ReactNode;
 }>) {
+  const siteOrigin = getConfiguredSiteOrigin();
+
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <body>
-        <Providers>{children}</Providers>
+        <Providers siteOrigin={siteOrigin}>{children}</Providers>
       </body>
     </html>
   );

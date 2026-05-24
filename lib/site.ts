@@ -1,4 +1,4 @@
-const normalizeAbsoluteUrl = (value: string) => {
+export const normalizeAbsoluteUrl = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) return "";
 
@@ -9,12 +9,20 @@ const normalizeAbsoluteUrl = (value: string) => {
   return `https://${trimmed.replace(/\/$/, "")}`;
 };
 
-export const getSiteOrigin = () => {
+export const getConfiguredSiteOrigin = () => {
   const configuredOrigin =
     process.env.NEXT_PUBLIC_SITE_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? process.env.NEXT_PUBLIC_VERCEL_URL;
 
   if (configuredOrigin) {
     return normalizeAbsoluteUrl(configuredOrigin);
+  }
+
+  return "";
+};
+
+export const getSiteOrigin = (preferredOrigin?: string) => {
+  if (preferredOrigin) {
+    return normalizeAbsoluteUrl(preferredOrigin);
   }
 
   if (typeof window !== "undefined") {
@@ -24,9 +32,9 @@ export const getSiteOrigin = () => {
   return "";
 };
 
-export const getAuthCallbackUrl = (nextPath = "/onboarding") => {
+export const getAuthCallbackUrl = (nextPath = "/onboarding", preferredOrigin?: string) => {
   const next = encodeURIComponent(nextPath);
-  const origin = getSiteOrigin();
+  const origin = getSiteOrigin(preferredOrigin);
 
   if (!origin) {
     return `/auth/callback?next=${next}`;

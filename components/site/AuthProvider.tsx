@@ -9,6 +9,7 @@ type AuthContextValue = {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  siteOrigin: string;
   signInWithGoogle: (redirectTo?: string) => Promise<{ error?: string }>;
   signInWithPassword: (email: string, password: string) => Promise<{ error?: string; userId?: string }>;
   signUpWithPassword: (input: {
@@ -22,7 +23,7 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({ children, siteOrigin = "" }: { children: ReactNode; siteOrigin?: string }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -53,7 +54,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user: session?.user ?? null,
       session,
       loading,
-      signInWithGoogle: async (redirectTo = getAuthCallbackUrl()) => {
+      siteOrigin,
+      signInWithGoogle: async (redirectTo = getAuthCallbackUrl("/onboarding", siteOrigin)) => {
         const { error } = await supabase.auth.signInWithOAuth({
           provider: "google",
           options: { redirectTo },
@@ -64,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         return error ? { error: error.message } : { userId: data.user?.id };
       },
-      signUpWithPassword: async ({ email, password, name, redirectTo = getAuthCallbackUrl() }) => {
+      signUpWithPassword: async ({ email, password, name, redirectTo = getAuthCallbackUrl("/onboarding", siteOrigin) }) => {
         const { error } = await supabase.auth.signUp({
           email,
           password,
@@ -80,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return error ? { error: error.message } : {};
       },
     }),
-    [loading, session],
+    [loading, session, siteOrigin],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
