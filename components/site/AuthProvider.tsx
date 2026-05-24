@@ -1,6 +1,7 @@
 "use client";
 
 import { supabase } from "@/lib/supabase";
+import { getAuthCallbackUrl } from "@/lib/site";
 import type { Session, User } from "@supabase/supabase-js";
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
 
@@ -24,15 +25,6 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-
-  const authCallbackUrl = (nextPath = "/onboarding") => {
-    const next = encodeURIComponent(nextPath);
-    if (typeof window === "undefined") {
-      return `/auth/callback?next=${next}`;
-    }
-
-    return `${window.location.origin}/auth/callback?next=${next}`;
-  };
 
   useEffect(() => {
     let mounted = true;
@@ -61,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user: session?.user ?? null,
       session,
       loading,
-      signInWithGoogle: async (redirectTo = authCallbackUrl()) => {
+      signInWithGoogle: async (redirectTo = getAuthCallbackUrl()) => {
         const { error } = await supabase.auth.signInWithOAuth({
           provider: "google",
           options: { redirectTo },
@@ -72,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         return error ? { error: error.message } : { userId: data.user?.id };
       },
-      signUpWithPassword: async ({ email, password, name, redirectTo = authCallbackUrl() }) => {
+      signUpWithPassword: async ({ email, password, name, redirectTo = getAuthCallbackUrl() }) => {
         const { error } = await supabase.auth.signUp({
           email,
           password,

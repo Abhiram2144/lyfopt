@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/components/site/AuthProvider";
 import { hasCompletedOnboarding } from "@/lib/onboarding";
+import { getAuthCallbackUrl } from "@/lib/site";
 import { motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 import Link from "next/link";
@@ -71,15 +72,6 @@ const AuthForm = ({ mode }: Props) => {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const authCallbackUrl = () => {
-    const next = encodeURIComponent(isSignup ? "/onboarding" : "/app");
-    if (typeof window === "undefined") {
-      return `/auth/callback?next=${next}`;
-    }
-
-    return `${window.location.origin}/auth/callback?next=${next}`;
-  };
-
   const nextPath = async (userId?: string) => {
     if (!userId) return "/onboarding";
     try {
@@ -106,7 +98,7 @@ const AuthForm = ({ mode }: Props) => {
         email,
         password,
         name,
-        redirectTo: authCallbackUrl(),
+        redirectTo: getAuthCallbackUrl("/onboarding"),
       });
 
       setLoading(false);
@@ -135,7 +127,7 @@ const AuthForm = ({ mode }: Props) => {
     setMessage("");
     setLoading(true);
 
-    const { error } = await signInWithGoogle(authCallbackUrl());
+    const { error } = await signInWithGoogle(getAuthCallbackUrl(isSignup ? "/onboarding" : "/app"));
 
     setLoading(false);
     if (error) {
